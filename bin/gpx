@@ -1,0 +1,315 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$autoload = dirname(__DIR__) . '/vendor/autoload.php';
+if (!file_exists($autoload)) {
+    fwrite(STDERR, "Run 'composer install' first.\n");
+    exit(1);
+}
+require_once $autoload;
+
+use Beljic\GpxTools\Analyzer\RouteAnalyzer;
+use Beljic\GpxTools\Analyzer\TrackStatsCalculator;
+use Beljic\GpxTools\Analyzer\TrainingAnalyzer;
+use Beljic\GpxTools\Cache\FileCache;
+use Beljic\GpxTools\Data\PlaceCategory;
+use Beljic\GpxTools\Data\Sport;
+use Beljic\GpxTools\Parser\GpxParser;
+use Beljic\GpxTools\Parser\GpxWriter;
+use Beljic\GpxTools\Processor\GpxCleaner;
+use Beljic\GpxTools\Processor\GpxSimplifier;
+
+$commands = ['parse', 'stats', 'clean', 'simplify', 'analyze'];
+
+$cmd = $argv[1] ?? null;
+
+if ($cmd === null || $cmd === '--help' || $cmd === '-h') {
+    echo <<<HELP
+    gpx-tools — GPX parsing, processing, and analysis
+
+    Usage:
+      gpx <command> <file.gpx> [options]
+
+    Commands:
+      parse       Show basic info about a GPX file
+      stats       Calculate track statistics
+      clean       Strip or filter GPX data (output to stdout or --out)
+      simplify    Reduce track point count (output to stdout or --out)
+      analyze     Full route + training analysis via OSM
+
+    Options (command-specific):
+      --out=<file>         Output file for clean/simplify (default: stdout)
+      --interval-km=<n>   Nominatim sample interval (analyze, default: 0.2)
+      --peak-radius-m=<n> Peak proximity radius (analyze, default: 200)
+      --cache-dir=<path>  Nominatim cache directory (analyze)
+      --strip-ext         Remove extension data (clean)
+      --strip-ts          Remove timestamps (clean)
+      --track-only        Remove waypoints (clean)
+      --geometry-only     Keep only lat/lon/ele (clean)
+      --min-dist-m=<n>    Min distance between points in meters (simplify)
+      --max-points=<n>    Target max point count (simplify)
+      --sport=<type>      Sport type for training analysis (stats/analyze)
+
+    HELP;
+    exit(0);
+}
+
+if (!in_array($cmd, $commands, true)) {
+    fwrite(STDERR, "Unknown command: $cmd. Run 'gpx --help' for usage.\n");
+    exit(1);
+}
+
+$args = array_slice($argv, 2);
+$opts = [];
+$positional = [];
+
+foreach ($args as $arg) {
+    if (str_starts_with($arg, '--')) {
+        [$key, $val] = explode('=', substr($arg, 2), 2) + [1 => true];
+        $opts[$key] = $val;
+    } else {
+        $positional[] = $arg;
+    }
+}
+
+$file = $positional[0] ?? null;
+if ($file === null) {
+    fwrite(STDERR, "Usage: gpx $cmd <file.gpx> [options]\n");
+    exit(1);
+}
+
+$parser = new GpxParser();
+
+try {
+    $gpx = $parser->parseFile($file);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}
+
+match ($cmd) {
+    'parse'    => cmdParse($gpx, $file),
+    'stats'    => cmdStats($gpx, $opts),
+    'clean'    => cmdClean($gpx, $opts),
+    'simplify' => cmdSimplify($gpx, $opts),
+    'analyze'  => cmdAnalyze($gpx, $opts),
+};
+
+// ─── Commands ────────────────────────────────────────────────────────────────
+
+function cmdParse(\Beljic\GpxTools\Data\ParsedGpx $gpx, string $file): void
+{
+    echo "File:      $file\n";
+    echo "Name:      " . ($gpx->name ?? '(none)') . "\n";
+    echo "Type:      " . ($gpx->type ?? '(none)') . "\n";
+    echo "Points:    " . count($gpx->track) . "\n";
+    echo "Waypoints: " . count($gpx->waypoints) . "\n";
+
+    $hasTime = false;
+    $hasEle  = false;
+    $hasHr   = false;
+    foreach ($gpx->track as $pt) {
+        if ($pt->time      !== null) { $hasTime = true; }
+        if ($pt->ele       !== null) { $hasEle  = true; }
+        if ($pt->heartRate !== null) { $hasHr   = true; }
+        if ($hasTime && $hasEle && $hasHr) { break; }
+    }
+
+    echo "Has timestamps: " . ($hasTime ? 'yes' : 'no') . "\n";
+    echo "Has elevation:  " . ($hasEle  ? 'yes' : 'no') . "\n";
+    echo "Has heart rate: " . ($hasHr   ? 'yes' : 'no') . "\n";
+}
+
+function cmdStats(\Beljic\GpxTools\Data\ParsedGpx $gpx, array $opts): void
+{
+    $sport = Sport::fromGpxType($opts['sport'] ?? $gpx->type);
+    $calc  = new TrackStatsCalculator();
+    $stats = $calc->calculate($gpx);
+
+    echo sprintf("Distance:        %.2f km\n", $stats->distanceKm);
+    echo sprintf("Elevation gain:  %.0f m\n", $stats->elevationGainM);
+    echo sprintf("Elevation loss:  %.0f m\n", $stats->elevationLossM);
+    echo sprintf("Max elevation:   %.0f m\n", $stats->maxElevationM);
+    echo sprintf("Min elevation:   %.0f m\n", $stats->minElevationM);
+    echo sprintf("Points:          %d\n", $stats->pointCount);
+
+    if ($stats->durationFormatted() !== null) {
+        echo "Duration:        " . $stats->durationFormatted() . "\n";
+    }
+    if ($stats->movingTimeSeconds !== null) {
+        $h = (int) ($stats->movingTimeSeconds / 3600);
+        $m = (int) (($stats->movingTimeSeconds % 3600) / 60);
+        $s = (int) ($stats->movingTimeSeconds % 60);
+        echo sprintf("Moving time:     %d:%02d:%02d\n", $h, $m, $s);
+    }
+    if ($sport->isPaceBased() && $stats->avgPaceFormatted() !== null) {
+        echo "Avg pace:        " . $stats->avgPaceFormatted() . " /km\n";
+    } elseif ($sport->isSpeedBased() && $stats->avgSpeedKmh !== null) {
+        echo sprintf("Avg speed:       %.1f km/h\n", $stats->avgSpeedKmh);
+    }
+    if ($stats->avgHeartRate !== null) {
+        echo sprintf("Avg HR:          %d bpm\n", $stats->avgHeartRate);
+        echo sprintf("Max HR:          %d bpm\n", $stats->maxHeartRate ?? 0);
+    }
+    if ($stats->avgTemperature !== null) {
+        echo sprintf("Avg temperature: %.1f°C\n", $stats->avgTemperature);
+    }
+
+    echo "\n";
+
+    $report = (new TrainingAnalyzer())->analyze($stats, $sport);
+    echo "Effort level:    " . $report->effortLevel->value . "\n";
+    echo "Summary:         " . $report->summary . "\n";
+
+    if (!empty($report->suggestions)) {
+        echo "\nSuggestions:\n";
+        foreach ($report->suggestions as $s) {
+            echo "  • $s\n";
+        }
+    }
+}
+
+function cmdClean(\Beljic\GpxTools\Data\ParsedGpx $gpx, array $opts): void
+{
+    $cleaner = new GpxCleaner();
+
+    if (isset($opts['geometry-only'])) {
+        $gpx = $cleaner->geometryOnly($gpx);
+    } else {
+        if (isset($opts['track-only'])) {
+            $gpx = $cleaner->trackOnly($gpx);
+        }
+        if (isset($opts['strip-ext'])) {
+            $gpx = $cleaner->stripExtensions($gpx);
+        }
+        if (isset($opts['strip-ts'])) {
+            $gpx = $cleaner->stripTimestamps($gpx);
+        }
+    }
+
+    $xml = (new GpxWriter())->toXml($gpx);
+
+    if (isset($opts['out'])) {
+        file_put_contents($opts['out'], $xml);
+        echo "Written to: {$opts['out']}\n";
+    } else {
+        echo $xml;
+    }
+}
+
+function cmdSimplify(\Beljic\GpxTools\Data\ParsedGpx $gpx, array $opts): void
+{
+    $simplifier = new GpxSimplifier();
+    $original   = count($gpx->track);
+
+    if (isset($opts['min-dist-m'])) {
+        $gpx = $simplifier->byMinDistance($gpx, (float) $opts['min-dist-m']);
+    } elseif (isset($opts['max-points'])) {
+        $gpx = $simplifier->byMaxPoints($gpx, (int) $opts['max-points']);
+    } else {
+        fwrite(STDERR, "Specify --min-dist-m=<n> or --max-points=<n>\n");
+        exit(1);
+    }
+
+    $reduced = count($gpx->track);
+    fwrite(STDERR, sprintf("Reduced: %d → %d points (%.0f%%)\n", $original, $reduced, ($reduced / $original) * 100));
+
+    $xml = (new GpxWriter())->toXml($gpx);
+
+    if (isset($opts['out'])) {
+        file_put_contents($opts['out'], $xml);
+        fwrite(STDERR, "Written to: {$opts['out']}\n");
+    } else {
+        echo $xml;
+    }
+}
+
+function cmdAnalyze(\Beljic\GpxTools\Data\ParsedGpx $gpx, array $opts): void
+{
+    $cacheDir    = $opts['cache-dir']    ?? sys_get_temp_dir() . '/gpx-tools/nominatim';
+    $intervalKm  = (float) ($opts['interval-km']    ?? 0.2);
+    $peakRadiusM = (float) ($opts['peak-radius-m']  ?? 200.0);
+    $sport       = Sport::fromGpxType($opts['sport'] ?? $gpx->type);
+
+    $cache    = new FileCache($cacheDir);
+    $analyzer = new RouteAnalyzer(
+        intervalKm:  $intervalKm,
+        peakRadiusM: $peakRadiusM,
+        cache:       $cache,
+    );
+
+    echo "Fetching natural features (Overpass API)...\n";
+    $route = $analyzer->analyze($gpx);
+
+    $stats  = (new TrackStatsCalculator())->calculate($gpx);
+    $report = (new TrainingAnalyzer())->analyze($stats, $sport);
+
+    echo sprintf("\n%s\n", $gpx->name ?? 'Route');
+    echo str_repeat('─', 40) . "\n";
+    echo "Summary: " . $report->summary . "\n\n";
+
+    if (!empty($route->peaks)) {
+        echo "── Peaks ──\n";
+        foreach ($route->peaks as $peak) {
+            $ele = $peak->elevation !== null ? sprintf(' (%d m)', (int) $peak->elevation) : '';
+            echo "   • {$peak->name}{$ele}\n";
+        }
+        echo "\n";
+    }
+
+    if (!empty($route->rivers)) {
+        echo "── Rivers & streams ──\n";
+        foreach ($route->rivers as $r) { echo "   • $r\n"; }
+        echo "\n";
+    }
+
+    if (!empty($route->lakes)) {
+        echo "── Lakes ──\n";
+        foreach ($route->lakes as $l) { echo "   • $l\n"; }
+        echo "\n";
+    }
+
+    $categoryLabels = [
+        PlaceCategory::City->value          => 'Cities',
+        PlaceCategory::Town->value          => 'Towns',
+        PlaceCategory::Village->value       => 'Villages',
+        PlaceCategory::Hamlet->value        => 'Hamlets',
+        PlaceCategory::Suburb->value        => 'Suburbs',
+        PlaceCategory::Neighbourhood->value => 'Neighbourhoods',
+        PlaceCategory::Quarter->value       => 'Quarters',
+        PlaceCategory::Locality->value      => 'Localities',
+        PlaceCategory::Municipality->value  => 'Municipalities',
+    ];
+
+    $grouped = [];
+    foreach ($route->places as $place) {
+        $grouped[$place->category->value][] = $place->name;
+    }
+
+    foreach ($categoryLabels as $value => $label) {
+        if (empty($grouped[$value])) { continue; }
+        echo "── $label ──\n";
+        foreach ($grouped[$value] as $name) { echo "   • $name\n"; }
+        echo "\n";
+    }
+
+    $namedWpts = array_filter($route->waypoints, fn($w) => !empty($w->name));
+    if (!empty($namedWpts)) {
+        echo "── GPX Waypoints ──\n";
+        foreach ($namedWpts as $wpt) {
+            $ele = $wpt->ele !== null ? sprintf(' (%.0f m)', $wpt->ele) : '';
+            echo "   • {$wpt->name}{$ele}\n";
+        }
+        echo "\n";
+    }
+
+    if (!empty($report->suggestions)) {
+        echo "── Suggestions ──\n";
+        foreach ($report->suggestions as $s) {
+            echo "   • $s\n";
+        }
+        echo "\n";
+    }
+}

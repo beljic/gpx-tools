@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx creator="test" version="1.1" xmlns="http://www.topografix.com/GPX/1/1"
+     xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+ <metadata>
+  <time>2026-01-01T08:00:00Z</time>
+ </metadata>
+ <wpt lat="44.0606" lon="19.9085">
+  <ele>487.2</ele>
+  <name>Start</name>
+ </wpt>
+ <trk>
+  <name>Test Track</name>
+  <type>trail_running</type>
+  <trkseg>
+   <trkpt lat="44.0606380" lon="19.9084890">
+    <ele>487.2</ele>
+    <time>2026-01-01T08:00:00Z</time>
+    <extensions>
+     <power>0</power>
+     <gpxtpx:TrackPointExtension>
+      <gpxtpx:atemp>15</gpxtpx:atemp>
+      <gpxtpx:hr>70</gpxtpx:hr>
+      <gpxtpx:cad>80</gpxtpx:cad>
+     </gpxtpx:TrackPointExtension>
+    </extensions>
+   </trkpt>
+   <!-- ~111 m north -->
+   <trkpt lat="44.0616380" lon="19.9084890">
+    <ele>510.0</ele>
+    <time>2026-01-01T08:01:00Z</time>
+    <extensions>
+     <power>150</power>
+     <gpxtpx:TrackPointExtension>
+      <gpxtpx:atemp>15</gpxtpx:atemp>
+      <gpxtpx:hr>145</gpxtpx:hr>
+      <gpxtpx:cad>82</gpxtpx:cad>
+     </gpxtpx:TrackPointExtension>
+    </extensions>
+   </trkpt>
+   <!-- ~222 m north -->
+   <trkpt lat="44.0626380" lon="19.9084890">
+    <ele>530.0</ele>
+    <time>2026-01-01T08:02:00Z</time>
+    <extensions>
+     <power>160</power>
+     <gpxtpx:TrackPointExtension>
+      <gpxtpx:atemp>14</gpxtpx:atemp>
+      <gpxtpx:hr>155</gpxtpx:hr>
+      <gpxtpx:cad>84</gpxtpx:cad>
+     </gpxtpx:TrackPointExtension>
+    </extensions>
+   </trkpt>
+  </trkseg>
+ </trk>
+</gpx>

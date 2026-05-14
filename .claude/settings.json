@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(file:*)",
+      "Bash(stat:*)",
+      "Bash(php -v)",
+      "Bash(php -m)",
+      "Bash(php -l:*)",
+      "Bash(composer:*)",
+      "Bash(composer install)",
+      "Bash(composer update:*)",
+      "Bash(composer dump-autoload:*)",
+      "Bash(composer validate:*)",
+      "Bash(./vendor/bin/phpunit)",
+      "Bash(./vendor/bin/phpunit:*)",
+      "Bash(vendor/bin/phpunit)",
+      "Bash(vendor/bin/phpunit:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch)",
+      "Bash(git ls-files:*)"
+    ],
+    "deny": []
+  }
+}

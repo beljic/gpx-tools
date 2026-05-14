@@ -1,0 +1,5 @@
+vendor/
+cache/
+*.gpx
+!tests/fixtures/*.gpx
+.idea/

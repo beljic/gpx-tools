@@ -1,0 +1,31 @@
+{
+    "name": "beljic/gpx-tools",
+    "description": "PHP toolkit for parsing, processing, and analyzing GPX tracks",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["gpx", "openstreetmap", "nominatim", "overpass", "route", "trail", "running", "cycling", "hiking", "training"],
+    "require": {
+        "php": ">=8.3",
+        "ext-curl": "*",
+        "ext-dom": "*",
+        "ext-json": "*",
+        "ext-simplexml": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Beljic\\GpxTools\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Beljic\\GpxTools\\Tests\\": "tests/"
+        }
+    },
+    "bin": ["bin/gpx"],
+    "config": {
+        "sort-packages": true
+    }
+}
