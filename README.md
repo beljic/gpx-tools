@@ -15,6 +15,10 @@ A PHP toolkit for working with GPX tracks. Parse, clean, simplify, and analyze �
 | **Statistics** | Calculate distance, elevation gain/loss, duration, pace, speed, and heart rate statistics. Moving time excludes stopped segments automatically. |
 | **Training analysis** | Classify effort level, estimate recovery time, and generate training suggestions. Rule-based, no external services needed. Works with or without HR data. |
 | **Route features** | Identify mountain peaks, rivers, lakes, and settlements along a route using OpenStreetMap's Nominatim and Overpass APIs. Disk-cached to respect rate limits. |
+| **Full analysis facade** | One call: parse + stats + training + OSM route features + bounds + metadata. Returns a single `ActivitySummary` VO. |
+| **Metadata & sensor flags** | Detect activity vs route template, sport type, start/end time, and which sensors were recording (HR, cadence, power, temperature). |
+| **Map payload** | Bounds (min/max lat/lon) and a downsampled point array ready for web map rendering. |
+| **JSON normalizer** | Convert any library VO to a plain PHP array — suitable for API responses and `json_encode`. |
 
 ## Requirements
 
@@ -185,6 +189,107 @@ echo count($simple->track); // 498
 
 Start and end points are always preserved. Waypoints and track metadata carry over unchanged.
 
+### Metadata and sensor detection
+
+```php
+use Beljic\GpxTools\Data\GpxMetadata;
+
+$meta = GpxMetadata::fromParsedGpx($gpx);
+
+$meta->sport;           // Sport::TrailRunning — detected from GPX type field
+$meta->isActivity;      // true  — track has timestamps (recorded activity, not a route template)
+$meta->startTime;       // DateTimeImmutable — first timestamped point
+$meta->endTime;         // DateTimeImmutable — last timestamped point
+$meta->waypointCount;   // int
+$meta->hasHeartRate;    // bool
+$meta->hasCadence;      // bool
+$meta->hasPower;        // bool
+$meta->hasTemperature;  // bool
+```
+
+`isActivity` is `true` when at least one track point carries a timestamp.
+A plain route template (e.g. a Komoot export without timing) will have `isActivity: false`.
+
+### Map payload
+
+Bounds and a downsampled track ready for a Leaflet/MapLibre overlay:
+
+```php
+use Beljic\GpxTools\Data\MapPayload;
+
+$payload = MapPayload::fromParsedGpx($gpx, maxPoints: 500);
+
+$payload->bounds->minLat; // float
+$payload->bounds->maxLat; // float
+$payload->bounds->minLon; // float
+$payload->bounds->maxLon; // float
+$payload->bounds->center(); // ['lat' => ..., 'lon' => ...]
+$payload->points;         // TrackPoint[] — uniformly downsampled, first + last preserved
+```
+
+Returns `null` when the track is empty.
+
+### Full activity analysis (one-call facade)
+
+Runs parse → stats → training → OSM route features → bounds + metadata in a single call:
+
+```php
+use Beljic\GpxTools\Analyzer\FullActivityAnalyzer;
+use Beljic\GpxTools\Cache\FileCache;
+use Beljic\GpxTools\Data\Sport;
+
+$analyzer = new FullActivityAnalyzer(
+    cache: new FileCache('/tmp/gpx-cache/nominatim'),
+);
+
+$summary = $analyzer->analyzeFile('track.gpx');
+// or: $analyzer->analyzeString($gpxContent)
+// or: $analyzer->analyzeFile('track.gpx', sport: Sport::Cycling)
+
+$summary->gpx;       // ParsedGpx
+$summary->stats;     // TrackStats
+$summary->training;  // TrainingReport
+$summary->route;     // RouteAnalysis (peaks, places, rivers, lakes)
+$summary->bounds;    // ?Bounds — null only for empty tracks
+$summary->metadata;  // GpxMetadata
+```
+
+Sport is auto-detected from the GPX type field. Pass an explicit `Sport` to override.
+
+```php
+// Laravel: wire once in AppServiceProvider
+$this->app->singleton(FullActivityAnalyzer::class, fn() => new FullActivityAnalyzer(
+    cache: new FileCache(storage_path('gpx/nominatim')),
+));
+
+// In a controller / job
+$summary = app(FullActivityAnalyzer::class)->analyzeFile($uploadedFile->getRealPath());
+```
+
+### JSON normalizer
+
+Convert any library VO to a plain array for API responses or `json_encode`:
+
+```php
+use Beljic\GpxTools\Normalizer\GpxNormalizer;
+
+$n = new GpxNormalizer();
+
+// Individual VOs
+$n->statsToArray($stats);             // all TrackStats fields in snake_case + formatted helpers
+$n->trainingReportToArray($report);   // effort_level, sport, summary, suggestions, zones
+$n->metadataToArray($meta);           // sport, start_time, end_time, sensor flags, is_activity
+$n->boundsToArray($bounds);           // min_lat, max_lat, min_lon, max_lon, center
+$n->parsedGpxToArray($gpx);           // name, type, track[], waypoints[]
+$n->routeAnalysisToArray($route);     // peaks[], places[], rivers[], lakes[], waypoints[]
+
+// Whole summary
+$array = $n->activitySummaryToArray($summary);
+echo json_encode($array);
+```
+
+Each track point normalizes to `[lat, lon, ele, time, hr, cad, temp, pow]` with `null` for absent fields.
+
 ### Route features via OpenStreetMap
 
 Queries [Nominatim](https://nominatim.org) for settlements and [Overpass API](https://overpass-api.de) for natural features (peaks, rivers, lakes) along the route.
@@ -221,6 +326,106 @@ $route->lakes;  // string[]
 **Important — API usage:**
 - Nominatim requires a [valid User-Agent](https://operations.osmfoundation.org/policies/nominatim/) and a maximum of 1 request/second. This library enforces the rate limit automatically. Always use a disk cache in production — `FileCache` writes responses as JSON files and skips the network on repeated runs.
 - Overpass API is used for a single bulk query per analysis. No rate limit enforcement needed, but avoid querying very long tracks at high frequency.
+
+## Use-case examples
+
+### Upload handler — analyze and return JSON
+
+```php
+use Beljic\GpxTools\Analyzer\FullActivityAnalyzer;
+use Beljic\GpxTools\Cache\FileCache;
+use Beljic\GpxTools\Normalizer\GpxNormalizer;
+
+$analyzer = new FullActivityAnalyzer(
+    cache: new FileCache(storage_path('gpx/nominatim')),
+);
+
+$summary = $analyzer->analyzeFile($uploadedFile->getRealPath());
+$payload = (new GpxNormalizer())->activitySummaryToArray($summary);
+
+return response()->json($payload);
+```
+
+### Map rendering — bounds + lightweight points
+
+```php
+use Beljic\GpxTools\Data\MapPayload;
+use Beljic\GpxTools\Parser\GpxParser;
+
+$gpx     = (new GpxParser())->parseFile('track.gpx');
+$payload = MapPayload::fromParsedGpx($gpx, maxPoints: 300);
+
+// Pass to frontend
+return [
+    'bounds' => [
+        'sw' => [$payload->bounds->minLat, $payload->bounds->minLon],
+        'ne' => [$payload->bounds->maxLat, $payload->bounds->maxLon],
+    ],
+    'points' => array_map(
+        fn($p) => [$p->lat, $p->lon],
+        $payload->points,
+    ),
+];
+```
+
+### Activity vs route — conditional UI
+
+```php
+use Beljic\GpxTools\Data\GpxMetadata;
+use Beljic\GpxTools\Parser\GpxParser;
+
+$gpx  = (new GpxParser())->parseFile('track.gpx');
+$meta = GpxMetadata::fromParsedGpx($gpx);
+
+if ($meta->isActivity) {
+    // Show stats, HR zones, training report
+    $stats = (new TrackStatsCalculator())->calculate($gpx);
+} else {
+    // Show as route — no time-based stats expected
+}
+
+// UI sensor availability
+$showHrChart  = $meta->hasHeartRate;
+$showPower    = $meta->hasPower;
+$showCadence  = $meta->hasCadence;
+```
+
+### Batch processing a folder of GPX files
+
+```php
+use Beljic\GpxTools\Analyzer\FullActivityAnalyzer;
+use Beljic\GpxTools\Cache\FileCache;
+use Beljic\GpxTools\Normalizer\GpxNormalizer;
+
+$analyzer   = new FullActivityAnalyzer(cache: new FileCache('/tmp/gpx-cache'));
+$normalizer = new GpxNormalizer();
+$results    = [];
+
+foreach (glob('/exports/*.gpx') as $file) {
+    try {
+        $summary   = $analyzer->analyzeFile($file);
+        $results[] = $normalizer->activitySummaryToArray($summary);
+    } catch (\RuntimeException $e) {
+        // malformed file — skip
+    }
+}
+```
+
+### AI training analysis prompt
+
+```php
+use Beljic\GpxTools\Analyzer\FullActivityAnalyzer;
+use Beljic\GpxTools\Normalizer\GpxNormalizer;
+
+$summary = (new FullActivityAnalyzer())->analyzeFile('track.gpx');
+$n       = new GpxNormalizer();
+
+$prompt = sprintf(
+    "Analyze this activity:\n%s\n\nRoute context:\n%s",
+    json_encode($n->statsToArray($summary->stats), JSON_PRETTY_PRINT),
+    json_encode($n->routeAnalysisToArray($summary->route), JSON_PRETTY_PRINT),
+);
+```
 
 ## CLI
 
@@ -354,6 +559,9 @@ src/
   Analyzer/    TrackStatsCalculator   Calculate statistics from track points
                TrainingAnalyzer       Classify effort, generate suggestions
                RouteAnalyzer          Identify terrain features via OSM APIs
+               FullActivityAnalyzer   Facade: parse+stats+training+route+bounds+metadata
+
+  Normalizer/  GpxNormalizer     Convert VOs to plain arrays for JSON serialization
 
   External/    Nominatim/        Reverse geocoding client + place classifier
                Overpass/         Bulk natural features query client
@@ -363,6 +571,10 @@ src/
                ParsedGpx         track[], waypoints[], name, type
                TrackStats        all calculated statistics
                TrainingReport    effortLevel, summary, suggestions, zones
+               ActivitySummary   full analysis result VO (facade output)
+               GpxMetadata       sport, start/end time, sensor flags, isActivity
+               Bounds            minLat, maxLat, minLon, maxLon + center()
+               MapPayload        Bounds + downsampled track for map rendering
                Sport             enum — running, trail_running, cycling, ...
                EffortLevel       enum — recovery, easy, moderate, hard, very_hard, race
                RouteAnalysis     peaks[], places[], rivers[], lakes[], waypoints[]
@@ -400,6 +612,11 @@ composer install
 | `TrainingAnalyzerTest` | Effort classification (distance-based and HR-based); suggestions |
 | `SportTest` | GPX type detection; pace/speed classification |
 | `PlaceClassifierTest` | Settlement mapping; priority order; locality fallback |
+| `BoundsTest` | fromTrack with multiple points, empty track, single point, center() |
+| `MapPayloadTest` | Downsampling, first/last point preservation, empty track, bounds |
+| `GpxMetadataTest` | Sport detection, isActivity flag, sensor flags, start/end time, waypoint count |
+| `GpxNormalizerTest` | Array shape and key names for each VO; null bounds; formatted helpers |
+| `FullActivityAnalyzerTest` | analyzeFile, analyzeString, sport auto-detect, sport override, bounds, sensor flags |
 
 No unit test makes external API calls. All tests run against a synthetic GPX fixture.
 
