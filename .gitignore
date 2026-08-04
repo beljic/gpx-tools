@@ -3,4 +3,5 @@ cache/
 *.gpx
 !tests/fixtures/*.gpx
 .idea/
-tmp/.phpunit.result.cache
+tmp/
+.phpunit.result.cache
