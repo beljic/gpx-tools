@@ -75,8 +75,13 @@ class RouteProfileAnalyzer
         $climbKm   = 0.0;
         $descentKm = 0.0;
         $flatBandKm = 0.0;
+        $ascentM   = 0.0;
+        $descentM  = 0.0;
 
         foreach ($distribution as $bucket) {
+            $ascentM  += $bucket->elevationGainM;
+            $descentM += $bucket->elevationLossM;
+
             if ($bucket->band->isClimb()) {
                 $climbKm += $bucket->distanceKm;
             } elseif ($bucket->band->isDescent()) {
@@ -96,6 +101,11 @@ class RouteProfileAnalyzer
             samples:                $this->buildSamples($steps),
             distanceKm:             $totalKm,
             flatEquivalentKm:       $flatKm,
+            // The trail rule of thumb: a kilometre of effort per 100 m climbed,
+            // and nothing back for the descent.
+            trailEquivalentKm:      $totalKm + $ascentM / 100.0,
+            totalAscentM:           $ascentM,
+            totalDescentM:          $descentM,
             gradeAdjustedFactor:    $totalKm > 0 ? $flatKm / $totalKm : 1.0,
             averageGradientPercent: $totalKm > 0 ? $netChange / ($totalKm * 1000.0) * 100.0 : 0.0,
             climbPercentOfRoute:    $totalKm > 0 ? $climbKm / $totalKm * 100.0 : 0.0,
@@ -637,6 +647,9 @@ class RouteProfileAnalyzer
             samples:                [],
             distanceKm:             0.0,
             flatEquivalentKm:       0.0,
+            trailEquivalentKm:      0.0,
+            totalAscentM:           0.0,
+            totalDescentM:          0.0,
             gradeAdjustedFactor:    1.0,
             averageGradientPercent: 0.0,
             climbPercentOfRoute:    0.0,

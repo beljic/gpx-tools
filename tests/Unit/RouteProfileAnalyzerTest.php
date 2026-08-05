@@ -82,6 +82,43 @@ class RouteProfileAnalyzerTest extends TestCase
         $this->assertEqualsWithDelta(1.66, $climb->gradeAdjustedFactor, 0.05);
     }
 
+    public function testTrailEquivalentChargesAKilometrePerHundredMetresClimbed(): void
+    {
+        // 2 km at a steady 10% climbs 200 m, so the trail equivalent is 2 + 2.
+        $profile = (new RouteProfileAnalyzer())->analyze($this->route([[2.0, 10.0]]));
+
+        $this->assertEqualsWithDelta(200.0, $profile->totalAscentM, 5.0);
+        $this->assertEqualsWithDelta(0.0, $profile->totalDescentM, 5.0);
+        $this->assertEqualsWithDelta(4.0, $profile->trailEquivalentKm, 0.1);
+    }
+
+    public function testTrailEquivalentIgnoresDescentEntirely(): void
+    {
+        // The rule of thumb charges for climbing only, so an out-and-back that
+        // ends where it started still pays for its ascent and nothing for the
+        // way down. This is exactly where it parts company with Minetti.
+        $profile = (new RouteProfileAnalyzer())->analyze($this->route([
+            [1.0, 10.0],
+            [1.0, -10.0],
+        ]));
+
+        // Smoothing rounds off the apex, shaving a few metres from both totals.
+        // That is the intended trade: the alternative is counting GPS noise as
+        // climb, which inflates D+ on a real recording far more than this.
+        $this->assertEqualsWithDelta(100.0, $profile->totalAscentM, 8.0);
+        $this->assertEqualsWithDelta(100.0, $profile->totalDescentM, 8.0);
+        $this->assertEqualsWithDelta(3.0, $profile->trailEquivalentKm, 0.1);
+        $this->assertLessThan($profile->trailEquivalentKm, $profile->flatEquivalentKm);
+    }
+
+    public function testFlatRouteCostsItsOwnDistanceUnderBothModels(): void
+    {
+        $profile = (new RouteProfileAnalyzer())->analyze($this->route([[4.0, 0.0]]));
+
+        $this->assertEqualsWithDelta($profile->distanceKm, $profile->trailEquivalentKm, 0.05);
+        $this->assertEqualsWithDelta(0.0, $profile->totalAscentM, 1.0);
+    }
+
     public function testGentleDescentIsCheaperThanTheFlat(): void
     {
         $profile = (new RouteProfileAnalyzer())->analyze($this->route([[3.0, -10.0]], 500.0));
