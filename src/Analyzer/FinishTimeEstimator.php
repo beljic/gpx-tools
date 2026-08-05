@@ -10,8 +10,14 @@ use InvalidArgumentException;
 
 /**
  * Predicts a finish time by applying Riegel's endurance formula to the route's
- * Minetti flat-equivalent distance rather than its map distance. Climbing is
- * therefore paid for as extra kilometres, which is what it feels like.
+ * trail-equivalent distance rather than its map distance. Climbing is therefore
+ * paid for as extra kilometres, which is what it feels like.
+ *
+ * The trail equivalent is used in preference to Minetti's flat equivalent
+ * because Minetti measures energy, not time: it hands back most of the cost of
+ * a climb on the way down, which on a loop course nearly cancels the climbing
+ * out. Nobody runs a mountain descent fast enough to bank that saving, so the
+ * Minetti figure produced finish times that were far too optimistic.
  *
  * What this deliberately does NOT model: technical ground, altitude, heat,
  * night sections, aid-station stops, or how well the runner descends. On a
@@ -43,19 +49,19 @@ class FinishTimeEstimator
             throw new InvalidArgumentException('Reference distance must be greater than zero.');
         }
 
-        $flatKm = $profile->flatEquivalentKm;
+        $effortKm = $profile->trailEquivalentKm;
 
-        if ($flatKm <= 0.0) {
+        if ($effortKm <= 0.0) {
             throw new InvalidArgumentException('Route has no measurable distance to estimate over.');
         }
 
-        $seconds = $referenceSeconds * ($flatKm / $referenceDistanceKm) ** $this->exponent;
+        $seconds = $referenceSeconds * ($effortKm / $referenceDistanceKm) ** $this->exponent;
 
         return new FinishTimeEstimate(
             referenceDistanceKm: $referenceDistanceKm,
             referenceSeconds:    $referenceSeconds,
             routeDistanceKm:     $profile->distanceKm,
-            flatEquivalentKm:    $flatKm,
+            effortDistanceKm:    $effortKm,
             estimatedSeconds:    (int) round($seconds),
             riegelExponent:      $this->exponent,
         );
