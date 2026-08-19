@@ -61,13 +61,52 @@ class RouteAnalyzer
             }
         }
 
+        $summit = $this->highestPoint($trackPoints);
+
         return new RouteAnalysis(
-            peaks:     $natural['peaks'],
-            places:    $places,
-            rivers:    $natural['rivers'],
-            lakes:     $natural['lakes'],
-            waypoints: $gpx->waypoints,
+            peaks:          $natural['peaks'],
+            places:         $places,
+            rivers:         $natural['rivers'],
+            lakes:          $natural['lakes'],
+            waypoints:      $gpx->waypoints,
+            mountainRanges: $summit === null
+                ? []
+                : $this->overpass->fetchMountainRanges($summit->lat, $summit->lon),
         );
+    }
+
+    /**
+     * The point that best says which massif a route belongs to.
+     *
+     * The start is the wrong one to ask with: a mountain route usually starts
+     * in a valley, and the range polygons are tagged fuzzy, so a trailhead
+     * can fall just outside the massif its whole climb sits in. The highest
+     * recorded point is inside it by definition. Routes without elevation
+     * fall back to the middle of the track rather than its edge.
+     *
+     * @param TrackPoint[] $points
+     */
+    private function highestPoint(array $points): ?TrackPoint
+    {
+        if ($points === []) {
+            return null;
+        }
+
+        $highest = null;
+
+        foreach ($points as $point) {
+            if ($point->ele !== null && ($highest === null || $point->ele > $highest->ele)) {
+                $highest = $point;
+            }
+        }
+
+        if ($highest !== null) {
+            return $highest;
+        }
+
+        $ordered = array_values($points);
+
+        return $ordered[intdiv(count($ordered), 2)];
     }
 
     /** @param TrackPoint[] $points @return TrackPoint[] */

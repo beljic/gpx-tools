@@ -12,12 +12,14 @@ readonly class RouteAnalysis
      * @param string[]   $rivers
      * @param string[]   $lakes
      * @param Waypoint[] $waypoints
+     * @param string[]   $mountainRanges
      */
     public function __construct(
-        public array $peaks     = [],
-        public array $places    = [],
-        public array $rivers    = [],
-        public array $lakes     = [],
-        public array $waypoints = [],
+        public array $peaks          = [],
+        public array $places         = [],
+        public array $rivers         = [],
+        public array $lakes          = [],
+        public array $waypoints      = [],
+        public array $mountainRanges = [],
     ) {}
 }

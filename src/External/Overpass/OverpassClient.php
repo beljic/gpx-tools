@@ -84,6 +84,46 @@ class OverpassClient
         return $this->parseResponse((array) json_decode($raw, true), $trackPoints, $peakRadiusM);
     }
 
+    /**
+     * The mountain ranges whose area contains this point.
+     *
+     * `is_in` is the only form that answers this. A range is a single fuzzy
+     * multipolygon spanning hundreds of kilometres, so an `around:` search
+     * measures the distance to its outline and returns nothing at all for a
+     * route sitting in the middle of the massif. The tag is
+     * `natural=mountain_range`; `natural=massif` exists in the wiki but is
+     * not what the data carries - a query for it comes back empty.
+     *
+     * @return string[] Range names, in the order the server returned them.
+     */
+    public function fetchMountainRanges(float $lat, float $lon): array
+    {
+        $query = '[out:json][timeout:' . self::QUERY_TIMEOUT_SECONDS . '];'
+            . sprintf('is_in(%F,%F)->.a;', $lat, $lon)
+            . 'area.a["natural"="mountain_range"];'
+            . 'out tags;';
+
+        $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
+
+        if ($raw === null || !json_validate($raw)) {
+            return [];
+        }
+
+        $data   = (array) json_decode($raw, true);
+        $ranges = [];
+
+        foreach ($data['elements'] ?? [] as $el) {
+            $tags = $el['tags'] ?? [];
+            $name = $tags['name'] ?? $tags['name:sr'] ?? null;
+
+            if ($name !== null && !in_array($name, $ranges, true)) {
+                $ranges[] = (string) $name;
+            }
+        }
+
+        return $ranges;
+    }
+
     private function parseResponse(array $data, array $trackPoints, float $peakRadiusM): array
     {
         $peakRadiusKm = $peakRadiusM / 1000.0;

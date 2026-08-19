@@ -201,4 +201,88 @@ final class OverpassClientTest extends TestCase
         $this->assertFalse(CurlHttpClient::isRetryable(400), 'a malformed query must not be retried');
         $this->assertFalse(CurlHttpClient::isRetryable(200), 'success must not be retried');
     }
+
+    /**
+     * A range covers hundreds of kilometres and its polygon is tagged fuzzy,
+     * so the only question that answers "which massif is this route on" is
+     * containment. An `around:` search measures distance to the outline and
+     * comes back empty for a route in the middle of the massif.
+     */
+    public function testAsksWhichRangeContainsThePoint(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public string $body = '';
+
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            public function post(string $url, string $body): ?string
+            {
+                $this->body = $body;
+
+                return '{"elements":[]}';
+            }
+        };
+
+        (new OverpassClient($http))->fetchMountainRanges(43.2319127, 22.7815272);
+
+        $query = urldecode($http->body);
+
+        $this->assertStringContainsString('is_in(43.231913,22.781527)', $query);
+        $this->assertStringContainsString('"natural"="mountain_range"', $query);
+        $this->assertStringNotContainsString('around:', $query);
+    }
+
+    public function testReadsRangeNamesFromTheResponse(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            public function post(string $url, string $body): ?string
+            {
+                return json_encode(['elements' => [
+                    ['type' => 'area', 'id' => 3618306789, 'tags' => [
+                        'name'    => 'Стара планина',
+                        'name:en' => 'Balkan Mountains',
+                        'natural' => 'mountain_range',
+                        'fuzzy'   => 'yes',
+                    ]],
+                    ['type' => 'area', 'id' => 3600000001, 'tags' => [
+                        'name:sr' => 'Сува планина',
+                        'natural' => 'mountain_range',
+                    ]],
+                    ['type' => 'area', 'id' => 3600000002, 'tags' => ['natural' => 'mountain_range']],
+                ]]);
+            }
+        };
+
+        $ranges = (new OverpassClient($http))->fetchMountainRanges(43.0, 22.8);
+
+        $this->assertSame(['Стара планина', 'Сува планина'], $ranges);
+    }
+
+    public function testReturnsNoRangesWhenTheInstanceRefuses(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            public function post(string $url, string $body): ?string
+            {
+                return null;
+            }
+        };
+
+        $this->assertSame([], (new OverpassClient($http))->fetchMountainRanges(43.0, 22.8));
+    }
 }

@@ -72,11 +72,12 @@ class GpxNormalizer
     public function routeAnalysisToArray(RouteAnalysis $route): array
     {
         return [
-            'peaks'     => array_map($this->peakToArray(...), $route->peaks),
-            'places'    => array_map($this->placeToArray(...), $route->places),
-            'rivers'    => $route->rivers,
-            'lakes'     => $route->lakes,
-            'waypoints' => array_map($this->waypointToArray(...), $route->waypoints),
+            'peaks'           => array_map($this->peakToArray(...), $route->peaks),
+            'places'          => array_map($this->placeToArray(...), $route->places),
+            'rivers'          => $route->rivers,
+            'lakes'           => $route->lakes,
+            'waypoints'       => array_map($this->waypointToArray(...), $route->waypoints),
+            'mountain_ranges' => $route->mountainRanges,
         ];
     }
 
