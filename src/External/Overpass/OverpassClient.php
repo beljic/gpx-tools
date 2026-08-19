@@ -13,6 +13,16 @@ class OverpassClient
 {
     private const ENDPOINT = 'https://overpass-api.de/api/interpreter';
 
+    /**
+     * Ceiling on how many coordinates go into the query polyline.
+     *
+     * Coverage is bought with request size: every clause repeats the polyline,
+     * so the body grows with the route. 500 points keeps a 250 km route at the
+     * full search density and degrades gracefully beyond that, rather than
+     * posting a megabyte for an ultra nobody has entered yet.
+     */
+    public const MAX_QUERY_POINTS = 500;
+
     public function __construct(private readonly HttpClientInterface $http) {}
 
     /**
@@ -28,7 +38,7 @@ class OverpassClient
         $overpassPeakM = max(500, (int) ($peakRadiusM * 2));
         $waterM        = 500;
 
-        $queryPoints = $this->sampleForQuery($trackPoints);
+        $queryPoints = $this->sampleForQuery($trackPoints, max($overpassPeakM, $waterM));
         $polyline    = implode(',', array_map(
             fn(TrackPoint $p) => sprintf('%F,%F', $p->lat, $p->lon),
             $queryPoints
@@ -118,14 +128,49 @@ class OverpassClient
     }
 
     /**
-     * Sample to ~5 km spacing to keep the Overpass polyline short.
+     * Sample the polyline the query is built from.
+     *
+     * Overpass searches circles of $searchRadiusM around each coordinate given,
+     * so the spacing decides what is searched at all. Spacing the centres one
+     * radius apart makes consecutive circles overlap, which leaves no stretch
+     * of the route unsearched: a feature at perpendicular distance d from the
+     * line, worst case halfway between two centres, is sqrt((r/2)^2 + d^2) from
+     * the nearer one, still inside r for every d up to 0.86 r - and the peak
+     * filter downstream only keeps d <= r/2 anyway.
+     *
+     * A fixed spacing here was the bug this replaces: at 5 km it asked about
+     * seven 400 m circles on a 30 km route and never saw the rest of it, so
+     * summits directly on the line came back missing.
      *
      * @param  TrackPoint[] $points
      * @return TrackPoint[]
      */
-    private function sampleForQuery(array $points): array
+    private function sampleForQuery(array $points, int $searchRadiusM): array
     {
-        return $this->sample($points, 5.0);
+        $intervalKm = max($searchRadiusM, 1) / 1000.0;
+
+        $sampled = $this->sample($points, $intervalKm);
+        if (count($sampled) <= self::MAX_QUERY_POINTS) {
+            return $sampled;
+        }
+
+        // Too long to search at full density; widen just enough to fit.
+        $lengthKm = $this->lengthKm($points);
+
+        // Two points of headroom: sample() always keeps the first coordinate
+        // and appends the last, on top of the intervals it walks.
+        return $this->sample($points, max($intervalKm, $lengthKm / (self::MAX_QUERY_POINTS - 2)));
+    }
+
+    /** @param TrackPoint[] $points */
+    private function lengthKm(array $points): float
+    {
+        $total = 0.0;
+        for ($i = 1, $n = count($points); $i < $n; $i++) {
+            $total += Geo::haversineKm($points[$i - 1]->lat, $points[$i - 1]->lon, $points[$i]->lat, $points[$i]->lon);
+        }
+
+        return $total;
     }
 
     /**
