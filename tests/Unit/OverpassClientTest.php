@@ -6,6 +6,7 @@ namespace Beljic\GpxTools\Tests\Unit;
 
 use Beljic\GpxTools\Data\TrackPoint;
 use Beljic\GpxTools\External\Overpass\OverpassClient;
+use Beljic\GpxTools\Http\CurlHttpClient;
 use Beljic\GpxTools\Http\HttpClientInterface;
 use Beljic\GpxTools\Support\Geo;
 use PHPUnit\Framework\TestCase;
@@ -172,5 +173,32 @@ final class OverpassClientTest extends TestCase
         (new OverpassClient($http, ''))->fetchNaturalFeatures($points);
 
         $this->assertSame(OverpassClient::DEFAULT_ENDPOINT, $http->url);
+    }
+
+    /**
+     * The client must outlast the query it sends. When it did not, Overpass was
+     * still allowed 60 s while curl hung up at 30, and the route came back with
+     * no features and nothing to say why.
+     */
+    public function testTheHttpClientWaitsLongerThanTheQueryIsAllowedToRun(): void
+    {
+        $this->assertGreaterThan(
+            OverpassClient::QUERY_TIMEOUT_SECONDS,
+            CurlHttpClient::DEFAULT_TIMEOUT,
+            'the HTTP timeout must exceed the timeout the query declares to Overpass'
+        );
+    }
+
+    /**
+     * 504 is what an overloaded Overpass answers, and it is transient - the
+     * same query succeeds on a quieter instance seconds later.
+     */
+    public function testAnOverloadedInstanceIsRetried(): void
+    {
+        $this->assertTrue(CurlHttpClient::isRetryable(504), '504 must be retried');
+        $this->assertTrue(CurlHttpClient::isRetryable(429), '429 must be retried');
+        $this->assertTrue(CurlHttpClient::isRetryable(503), '503 must be retried');
+        $this->assertFalse(CurlHttpClient::isRetryable(400), 'a malformed query must not be retried');
+        $this->assertFalse(CurlHttpClient::isRetryable(200), 'success must not be retried');
     }
 }

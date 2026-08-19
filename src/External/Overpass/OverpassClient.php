@@ -30,6 +30,13 @@ class OverpassClient
      */
     public const MAX_QUERY_POINTS = 500;
 
+    /**
+     * How long the server is allowed to spend on the query. The HTTP client
+     * must be willing to wait longer than this, or it hangs up on work the
+     * server is still permitted to finish - see CurlHttpClient::DEFAULT_TIMEOUT.
+     */
+    public const QUERY_TIMEOUT_SECONDS = 60;
+
     private readonly string $endpoint;
 
     public function __construct(
@@ -58,7 +65,7 @@ class OverpassClient
             $queryPoints
         ));
 
-        $query = "[out:json][timeout:60];"
+        $query = '[out:json][timeout:' . self::QUERY_TIMEOUT_SECONDS . '];'
             . "(node[\"natural\"=\"peak\"](around:{$overpassPeakM},{$polyline});"
             . "node[\"natural\"=\"hill\"](around:{$overpassPeakM},{$polyline});"
             . "way[\"waterway\"=\"river\"](around:{$waterM},{$polyline});"
