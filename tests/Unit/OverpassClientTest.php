@@ -115,4 +115,62 @@ final class OverpassClientTest extends TestCase
 
         $this->assertLessThanOrEqual(OverpassClient::MAX_QUERY_POINTS, $sampledCount);
     }
+
+    /**
+     * A bulk import has to be able to move off the public instance; leaving the
+     * endpoint hard-coded is what turns one heavy run into a refused connection
+     * for every run after it.
+     */
+    public function testQueriesTheEndpointItWasGiven(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public string $url = '';
+
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            public function post(string $url, string $body): ?string
+            {
+                $this->url = $url;
+
+                return '{"elements":[]}';
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.0, lon: 22.8), new TrackPoint(lat: 43.01, lon: 22.8)];
+
+        (new OverpassClient($http, 'https://overpass.example.test/api/interpreter'))
+            ->fetchNaturalFeatures($points);
+
+        $this->assertSame('https://overpass.example.test/api/interpreter', $http->url);
+    }
+
+    public function testFallsBackToThePublicInstanceWhenNoEndpointIsGiven(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public string $url = '';
+
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            public function post(string $url, string $body): ?string
+            {
+                $this->url = $url;
+
+                return '{"elements":[]}';
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.0, lon: 22.8), new TrackPoint(lat: 43.01, lon: 22.8)];
+
+        (new OverpassClient($http, ''))->fetchNaturalFeatures($points);
+
+        $this->assertSame(OverpassClient::DEFAULT_ENDPOINT, $http->url);
+    }
 }

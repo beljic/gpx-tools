@@ -34,6 +34,7 @@ class FullActivityAnalyzer
         CacheInterface $cache         = new NullCache(),
         float $intervalKm             = 0.2,
         float $peakRadiusM            = 200.0,
+        ?string $overpassEndpoint     = null,
     ) {
         $http                   = $http ?? new CurlHttpClient();
         $this->parser           = new GpxParser();
@@ -44,6 +45,7 @@ class FullActivityAnalyzer
             peakRadiusM: $peakRadiusM,
             http:        $http,
             cache:       $cache,
+            overpassEndpoint: $overpassEndpoint,
         );
     }
 

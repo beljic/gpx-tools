@@ -28,11 +28,12 @@ class RouteAnalyzer
         private readonly float $peakRadiusM = 200.0,
         ?HttpClientInterface $http          = null,
         CacheInterface $cache               = new NullCache(),
+        ?string $overpassEndpoint           = null,
     ) {
         $http             = $http ?? new CurlHttpClient();
         $this->nominatim  = new NominatimClient($http, $cache);
         $this->classifier = new PlaceClassifier();
-        $this->overpass   = new OverpassClient($http);
+        $this->overpass   = new OverpassClient($http, $overpassEndpoint);
     }
 
     public function analyze(ParsedGpx $gpx): RouteAnalysis

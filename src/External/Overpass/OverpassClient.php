@@ -11,7 +11,14 @@ use Beljic\GpxTools\Support\Geo;
 
 class OverpassClient
 {
-    private const ENDPOINT = 'https://overpass-api.de/api/interpreter';
+    /**
+     * The public instance, and the one to move off when a bulk run needs more
+     * than its fair-use policy allows. It runs on donated capacity and refuses
+     * connections outright from a client that has been queueing heavy queries,
+     * so anything importing more than a handful of routes should point at a
+     * mirror or an instance it runs itself.
+     */
+    public const DEFAULT_ENDPOINT = 'https://overpass-api.de/api/interpreter';
 
     /**
      * Ceiling on how many coordinates go into the query polyline.
@@ -23,7 +30,14 @@ class OverpassClient
      */
     public const MAX_QUERY_POINTS = 500;
 
-    public function __construct(private readonly HttpClientInterface $http) {}
+    private readonly string $endpoint;
+
+    public function __construct(
+        private readonly HttpClientInterface $http,
+        ?string $endpoint = null,
+    ) {
+        $this->endpoint = $endpoint !== null && $endpoint !== '' ? $endpoint : self::DEFAULT_ENDPOINT;
+    }
 
     /**
      * @param TrackPoint[] $trackPoints
@@ -54,7 +68,7 @@ class OverpassClient
             . "relation[\"natural\"=\"water\"](around:{$waterM},{$polyline});"
             . ");out;";
 
-        $raw = $this->http->post(self::ENDPOINT, 'data=' . urlencode($query));
+        $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
 
         if ($raw === null || !json_validate($raw)) {
             return ['peaks' => [], 'rivers' => [], 'lakes' => []];
