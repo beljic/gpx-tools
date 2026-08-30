@@ -285,4 +285,141 @@ final class OverpassClientTest extends TestCase
 
         $this->assertSame([], (new OverpassClient($http))->fetchMountainRanges(43.0, 22.8));
     }
+
+    public function testFetchHighwaySegmentsParsesGeometryAndTags(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return json_encode(['elements' => [[
+                    'type' => 'way',
+                    'id' => 1,
+                    'tags' => ['highway' => 'path', 'surface' => 'dirt', 'sac_scale' => 'mountain_hiking'],
+                    'geometry' => [
+                        ['lat' => 43.000, 'lon' => 22.800],
+                        ['lat' => 43.001, 'lon' => 22.801],
+                    ],
+                ]]]);
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.000, lon: 22.800), new TrackPoint(lat: 43.001, lon: 22.801)];
+        $segments = (new OverpassClient($http))->fetchHighwaySegments($points);
+
+        $this->assertCount(1, $segments);
+        $this->assertSame('path', $segments[0]->highway);
+        $this->assertSame('dirt', $segments[0]->surface);
+        $this->assertSame('mountain_hiking', $segments[0]->sacScale);
+        $this->assertNull($segments[0]->trailVisibility);
+        $this->assertCount(2, $segments[0]->points);
+        $this->assertSame(43.000, $segments[0]->points[0]->lat);
+    }
+
+    public function testFetchHighwaySegmentsSkipsElementsWithoutGeometry(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return json_encode(['elements' => [
+                    ['type' => 'way', 'id' => 1, 'tags' => ['highway' => 'path']],
+                    ['type' => 'node', 'id' => 2, 'tags' => ['highway' => 'bus_stop']],
+                ]]);
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.0, lon: 22.8), new TrackPoint(lat: 43.001, lon: 22.8)];
+        $segments = (new OverpassClient($http))->fetchHighwaySegments($points);
+
+        $this->assertSame([], $segments);
+    }
+
+    public function testFetchHighwaySegmentsReturnsEmptyOnMalformedResponse(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return 'not json';
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.0, lon: 22.8), new TrackPoint(lat: 43.001, lon: 22.8)];
+
+        $this->assertSame([], (new OverpassClient($http))->fetchHighwaySegments($points));
+    }
+
+    public function testFetchHighwaySegmentsReturnsEmptyWhenTheInstanceRefuses(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return null;
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.0, lon: 22.8), new TrackPoint(lat: 43.001, lon: 22.8)];
+
+        $this->assertSame([], (new OverpassClient($http))->fetchHighwaySegments($points));
+    }
+
+    public function testFetchHighwaySegmentsQueriesWayHighwayWithGeometry(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public string $body = '';
+
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                $this->body = $body;
+
+                return '{"elements":[]}';
+            }
+        };
+
+        $points = [new TrackPoint(lat: 43.0, lon: 22.8), new TrackPoint(lat: 43.001, lon: 22.8)];
+        (new OverpassClient($http))->fetchHighwaySegments($points, searchRadiusM: 30.0);
+
+        $query = urldecode($http->body);
+        $this->assertStringContainsString('way["highway"]', $query);
+        $this->assertStringContainsString('around:30,', $query);
+        $this->assertStringContainsString('out geom;', $query);
+    }
 }

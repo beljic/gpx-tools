@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Beljic\GpxTools\External\Overpass;
 
+use Beljic\GpxTools\Data\HighwaySegment;
 use Beljic\GpxTools\Data\Peak;
 use Beljic\GpxTools\Data\TrackPoint;
 use Beljic\GpxTools\Http\HttpClientInterface;
@@ -122,6 +123,76 @@ class OverpassClient
         }
 
         return $ranges;
+    }
+
+    /**
+     * Highway/path ways near the route, with the tags surface and
+     * technicality are read from. A tight radius on purpose: unlike the peak
+     * search, a false match here is a parallel street, not a missed summit.
+     *
+     * @param  TrackPoint[] $trackPoints
+     * @return HighwaySegment[]
+     */
+    public function fetchHighwaySegments(array $trackPoints, float $searchRadiusM = 30.0): array
+    {
+        if (empty($trackPoints)) {
+            return [];
+        }
+
+        $radiusM     = max(1, (int) $searchRadiusM);
+        $queryPoints = $this->sampleForQuery($trackPoints, $radiusM);
+        $polyline    = implode(',', array_map(
+            fn(TrackPoint $p) => sprintf('%F,%F', $p->lat, $p->lon),
+            $queryPoints
+        ));
+
+        $query = '[out:json][timeout:' . self::QUERY_TIMEOUT_SECONDS . '];'
+            . "way[\"highway\"](around:{$radiusM},{$polyline});"
+            . 'out geom;';
+
+        $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
+
+        if ($raw === null || !json_validate($raw)) {
+            return [];
+        }
+
+        return $this->parseHighwayResponse((array) json_decode($raw, true));
+    }
+
+    /** @return HighwaySegment[] */
+    private function parseHighwayResponse(array $data): array
+    {
+        $segments = [];
+
+        foreach ($data['elements'] ?? [] as $el) {
+            if (($el['type'] ?? null) !== 'way' || empty($el['geometry'])) {
+                continue;
+            }
+
+            $points = [];
+            foreach ($el['geometry'] as $vertex) {
+                if (!isset($vertex['lat'], $vertex['lon'])) {
+                    continue;
+                }
+                $points[] = new TrackPoint(lat: (float) $vertex['lat'], lon: (float) $vertex['lon']);
+            }
+
+            if ($points === []) {
+                continue;
+            }
+
+            $tags = $el['tags'] ?? [];
+
+            $segments[] = new HighwaySegment(
+                points: $points,
+                surface: isset($tags['surface']) ? (string) $tags['surface'] : null,
+                highway: isset($tags['highway']) ? (string) $tags['highway'] : null,
+                sacScale: isset($tags['sac_scale']) ? (string) $tags['sac_scale'] : null,
+                trailVisibility: isset($tags['trail_visibility']) ? (string) $tags['trail_visibility'] : null,
+            );
+        }
+
+        return $segments;
     }
 
     private function parseResponse(array $data, array $trackPoints, float $peakRadiusM): array
