@@ -42,6 +42,7 @@ class RouteAnalyzer
         $sampled     = $this->sample($trackPoints, $this->intervalKm);
 
         $natural = $this->overpass->fetchNaturalFeatures($trackPoints, $this->peakRadiusM);
+        $surface = (new SurfaceAnalyzer($this->overpass))->analyze($sampled);
 
         $places = [];
         $seen   = [];
@@ -72,6 +73,7 @@ class RouteAnalyzer
             mountainRanges: $summit === null
                 ? []
                 : $this->overpass->fetchMountainRanges($summit->lat, $summit->lon),
+            surface: $surface,
         );
     }
 

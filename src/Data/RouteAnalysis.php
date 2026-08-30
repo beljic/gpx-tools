@@ -21,5 +21,6 @@ readonly class RouteAnalysis
         public array $lakes          = [],
         public array $waypoints      = [],
         public array $mountainRanges = [],
+        public ?SurfaceAnalysis $surface = null,
     ) {}
 }

@@ -101,6 +101,37 @@ final class RouteAnalyzerTest extends TestCase
     }
 
     /**
+     * The surface lookup rides along the same sampled points and Overpass
+     * client the peak/river lookup already built — no second HTTP client.
+     */
+    public function testSurfaceAnalysisIsPresentOnTheResult(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return '{"elements":[]}';
+            }
+        };
+
+        $analyzer = new RouteAnalyzer(intervalKm: 100.0, http: $http, cache: $this->alwaysHitCache());
+
+        $result = $analyzer->analyze(new ParsedGpx(track: [
+            new TrackPoint(lat: 43.20, lon: 22.70),
+            new TrackPoint(lat: 43.28, lon: 22.85),
+        ]));
+
+        $this->assertSame('unavailable', $result->surface->status);
+    }
+
+    /**
      * A cache that always reports a hit keeps the reverse-geocoding path from
      * sleeping out its 1.1 s rate limit per sampled point.
      */
