@@ -43,6 +43,15 @@ class OverpassClient
     public function __construct(
         private readonly HttpClientInterface $http,
         ?string $endpoint = null,
+        /**
+         * Same figure and same reasoning as NominatimClient::$rateLimitUs: a
+         * single analyze() run fires three of these back-to-back (natural
+         * features, mountain ranges, highway/surface), and pacing between
+         * them was missing entirely - zero delay against the same host that
+         * has refused connections outright after a bulk run's spacing was
+         * cut from 20 s down to 8 s.
+         */
+        private readonly int $rateLimitUs = 1_100_000,
     ) {
         $this->endpoint = $endpoint !== null && $endpoint !== '' ? $endpoint : self::DEFAULT_ENDPOINT;
     }
@@ -77,6 +86,7 @@ class OverpassClient
             . ");out;";
 
         $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
+        usleep($this->rateLimitUs);
 
         if ($raw === null || !json_validate($raw)) {
             return ['peaks' => [], 'rivers' => [], 'lakes' => []];
@@ -105,6 +115,7 @@ class OverpassClient
             . 'out tags;';
 
         $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
+        usleep($this->rateLimitUs);
 
         if ($raw === null || !json_validate($raw)) {
             return [];
@@ -151,6 +162,7 @@ class OverpassClient
             . 'out geom;';
 
         $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
+        usleep($this->rateLimitUs);
 
         if ($raw === null || !json_validate($raw)) {
             return [];
