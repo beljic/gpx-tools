@@ -8,6 +8,7 @@ use Beljic\GpxTools\Data\EffortLevel;
 use Beljic\GpxTools\Data\Sport;
 use Beljic\GpxTools\Data\TrackStats;
 use Beljic\GpxTools\Data\TrainingReport;
+use Beljic\GpxTools\Data\TrainingSuggestion;
 
 class TrainingAnalyzer
 {
@@ -21,15 +22,16 @@ class TrainingAnalyzer
     {
         $effortLevel = $this->classifyEffort($stats, $sport);
         $summary     = $this->buildSummary($stats, $sport, $effortLevel);
-        $suggestions = $this->buildSuggestions($stats, $sport, $effortLevel);
+        $details     = $this->buildSuggestions($stats, $sport, $effortLevel);
         $zones       = $this->buildZones($stats);
 
         return new TrainingReport(
-            effortLevel: $effortLevel,
-            sport:       $sport,
-            summary:     $summary,
-            suggestions: $suggestions,
-            zones:       $zones,
+            effortLevel:       $effortLevel,
+            sport:             $sport,
+            summary:           $summary,
+            suggestions:       array_map(static fn (TrainingSuggestion $s): string => $s->message, $details),
+            zones:             $zones,
+            suggestionDetails: $details,
         );
     }
 
@@ -100,7 +102,7 @@ class TrainingAnalyzer
         return implode(' · ', $parts) . sprintf(' · %s effort', $effort->value);
     }
 
-    /** @return string[] */
+    /** @return list<TrainingSuggestion> */
     private function buildSuggestions(TrackStats $stats, Sport $sport, EffortLevel $effort): array
     {
         $suggestions = [];
@@ -115,49 +117,62 @@ class TrainingAnalyzer
         };
 
         if ($recoveryDays >= 2) {
-            $suggestions[] = sprintf(
-                'Plan at least %d days of easy training or rest before the next hard session.',
-                $recoveryDays
+            $suggestions[] = new TrainingSuggestion(
+                'recovery_days',
+                sprintf('Plan at least %d days of easy training or rest before the next hard session.', $recoveryDays),
+                ['days' => $recoveryDays],
             );
         }
 
         // Elevation density
         $elevPerKm = $stats->distanceKm > 0 ? $stats->elevationGainM / $stats->distanceKm : 0;
         if ($elevPerKm > 100) {
-            $suggestions[] = sprintf(
-                'High elevation density (%.0f m/km). Focus on uphill running form and downhill quad strength.',
-                $elevPerKm
+            $suggestions[] = new TrainingSuggestion(
+                'high_elevation_density',
+                sprintf('High elevation density (%.0f m/km). Focus on uphill running form and downhill quad strength.', $elevPerKm),
+                ['m_per_km' => (int) round($elevPerKm)],
             );
         }
 
         // Pace spread (trail running specific)
         if ($sport === Sport::TrailRunning && $stats->avgPaceSecPerKm !== null) {
             if ($stats->avgPaceSecPerKm > 480) { // > 8 min/km
-                $suggestions[] = 'Average pace suggests power hiking sections — normal for technical trails with significant elevation.';
+                $suggestions[] = new TrainingSuggestion(
+                    'power_hiking',
+                    'Average pace suggests power hiking sections — normal for technical trails with significant elevation.',
+                );
             }
         }
 
         // HR data quality hints
         if ($stats->avgHeartRate === null && ($stats->distanceKm > 10 || $stats->elevationGainM > 500)) {
-            $suggestions[] = 'No heart rate data available. Consider a chest strap or optical HR monitor for more accurate effort measurement on longer efforts.';
+            $suggestions[] = new TrainingSuggestion(
+                'missing_heart_rate',
+                'No heart rate data available. Consider a chest strap or optical HR monitor for more accurate effort measurement on longer efforts.',
+            );
         }
 
         if ($stats->maxHeartRate !== null && $stats->maxHeartRate > 190) {
-            $suggestions[] = sprintf(
-                'Max HR %d bpm is unusually high — verify sensor data or check for GPS/HR spikes.',
-                $stats->maxHeartRate
+            $suggestions[] = new TrainingSuggestion(
+                'max_heart_rate_suspicious',
+                sprintf('Max HR %d bpm is unusually high — verify sensor data or check for GPS/HR spikes.', $stats->maxHeartRate),
+                ['bpm' => $stats->maxHeartRate],
             );
         }
 
         // Temperature
         if ($stats->avgTemperature !== null) {
             if ($stats->avgTemperature > 30) {
-                $suggestions[] = sprintf(
-                    'Activity performed in heat (avg %.0f°C). Ensure adequate hydration and allow extra recovery.',
-                    $stats->avgTemperature
+                $suggestions[] = new TrainingSuggestion(
+                    'heat',
+                    sprintf('Activity performed in heat (avg %.0f°C). Ensure adequate hydration and allow extra recovery.', $stats->avgTemperature),
+                    ['celsius' => (int) round($stats->avgTemperature)],
                 );
             } elseif ($stats->avgTemperature < 0) {
-                $suggestions[] = 'Cold conditions — factor in extra warm-up time and layering when planning similar efforts.';
+                $suggestions[] = new TrainingSuggestion(
+                    'cold',
+                    'Cold conditions — factor in extra warm-up time and layering when planning similar efforts.',
+                );
             }
         }
 
