@@ -13,5 +13,7 @@ readonly class HighwaySegment
         public ?string $highway = null,
         public ?string $sacScale = null,
         public ?string $trailVisibility = null,
+        /** OSM tracktype (grade1–grade5), how firm a highway=track is. */
+        public ?string $trackType = null,
     ) {}
 }

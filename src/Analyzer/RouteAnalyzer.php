@@ -29,6 +29,12 @@ class RouteAnalyzer
         ?HttpClientInterface $http          = null,
         CacheInterface $cache               = new NullCache(),
         ?string $overpassEndpoint           = null,
+        /**
+         * Sampling for the surface lookup alone. It is one Overpass request
+         * whatever the point count, unlike place names (one Nominatim request
+         * per point), so it can be much denser. Null keeps $intervalKm.
+         */
+        private readonly ?float $surfaceIntervalKm = null,
     ) {
         $http             = $http ?? new CurlHttpClient();
         $this->nominatim  = new NominatimClient($http, $cache);
@@ -42,7 +48,10 @@ class RouteAnalyzer
         $sampled     = $this->sample($trackPoints, $this->intervalKm);
 
         $natural = $this->overpass->fetchNaturalFeatures($trackPoints, $this->peakRadiusM);
-        $surface = (new SurfaceAnalyzer($this->overpass))->analyze($sampled);
+        $surfacePoints = $this->surfaceIntervalKm === null
+            ? $sampled
+            : $this->sample($trackPoints, $this->surfaceIntervalKm);
+        $surface = (new SurfaceAnalyzer($this->overpass))->analyze($surfacePoints);
 
         $places = [];
         $seen   = [];

@@ -132,6 +132,48 @@ final class RouteAnalyzerTest extends TestCase
     }
 
     /**
+     * Place names are sampled sparsely because Nominatim allows one request
+     * per second. Surface is one Overpass request whatever the point count,
+     * so it can be sampled densely on its own interval.
+     */
+    public function testSurfaceUsesItsOwnDenserSamplingInterval(): void
+    {
+        // Eleven points 100 m apart along a meridian; one gravel way under all.
+        $track = [];
+        for ($i = 0; $i <= 10; $i++) {
+            $track[] = new TrackPoint(lat: 43.0 + $i * 0.0009, lon: 22.8);
+        }
+
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return (string) json_encode(['elements' => [[
+                    'type' => 'way',
+                    'tags' => ['highway' => 'track', 'surface' => 'gravel'],
+                    'geometry' => [['lat' => 43.0, 'lon' => 22.8], ['lat' => 43.009, 'lon' => 22.8]],
+                ]]]);
+            }
+        };
+
+        $sparse = (new RouteAnalyzer(intervalKm: 100.0, http: $http, cache: $this->alwaysHitCache()))
+            ->analyze(new ParsedGpx(track: $track));
+        $dense = (new RouteAnalyzer(intervalKm: 100.0, http: $http, cache: $this->alwaysHitCache(), surfaceIntervalKm: 0.1))
+            ->analyze(new ParsedGpx(track: $track));
+
+        // Without the new argument nothing changes: first and last point only.
+        $this->assertSame(2, $sparse->surface->breakdown[0]->pointCount);
+        $this->assertSame(11, $dense->surface->breakdown[0]->pointCount);
+    }
+
+    /**
      * A cache that always reports a hit keeps the reverse-geocoding path from
      * sleeping out its 1.1 s rate limit per sampled point.
      */

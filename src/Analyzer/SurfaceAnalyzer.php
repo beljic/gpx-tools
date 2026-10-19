@@ -18,7 +18,9 @@ class SurfaceAnalyzer
 {
     /**
      * How far a sampled point may sit from the nearest indexed way and still
-     * count as matched to it (Approach 1: nearest vertex, not line projection).
+     * count as matched to it. Measured to the way's line, not its vertices:
+     * a straight forest road is often mapped with vertices hundreds of metres
+     * apart, and a point between them is still on the road.
      */
     public const MATCH_RADIUS_M = 30.0;
 
@@ -111,16 +113,47 @@ class SurfaceAnalyzer
         $nearestDist = PHP_FLOAT_MAX;
 
         foreach ($segments as $segment) {
-            foreach ($segment->points as $vertex) {
-                $d = Geo::haversineKm($point->lat, $point->lon, $vertex->lat, $vertex->lon);
-                if ($d < $nearestDist) {
-                    $nearestDist = $d;
-                    $nearest     = $segment;
+            $vertices = $segment->points;
+
+            if (count($vertices) === 1) {
+                $d = Geo::haversineKm($point->lat, $point->lon, $vertices[0]->lat, $vertices[0]->lon);
+            } else {
+                $d = PHP_FLOAT_MAX;
+                for ($i = 1, $n = count($vertices); $i < $n; $i++) {
+                    $d = min($d, $this->distanceToLineKm($point, $vertices[$i - 1], $vertices[$i]));
                 }
+            }
+
+            if ($d < $nearestDist) {
+                $nearestDist = $d;
+                $nearest     = $segment;
             }
         }
 
         return $nearestDist <= $matchRadiusKm ? $nearest : null;
+    }
+
+    /**
+     * Distance from $p to the line segment a–b, on a local flat projection
+     * centred on $p. Accurate to well under a metre at the 30 m match radius.
+     */
+    private function distanceToLineKm(TrackPoint $p, TrackPoint $a, TrackPoint $b): float
+    {
+        $kmPerDegLat = 110.574;
+        $kmPerDegLon = 111.320 * cos(deg2rad($p->lat));
+
+        $ax = ($a->lon - $p->lon) * $kmPerDegLon;
+        $ay = ($a->lat - $p->lat) * $kmPerDegLat;
+        $bx = ($b->lon - $p->lon) * $kmPerDegLon;
+        $by = ($b->lat - $p->lat) * $kmPerDegLat;
+
+        $dx = $bx - $ax;
+        $dy = $by - $ay;
+        $lengthSq = $dx * $dx + $dy * $dy;
+
+        $t = $lengthSq > 0.0 ? max(0.0, min(1.0, -($ax * $dx + $ay * $dy) / $lengthSq)) : 0.0;
+
+        return hypot($ax + $t * $dx, $ay + $t * $dy);
     }
 
     private function categoryOf(HighwaySegment $segment): ?SurfaceCategory
@@ -145,6 +178,23 @@ class SurfaceAnalyzer
 
         $trailHighways = ['path', 'footway', 'track', 'bridleway', 'steps'];
         if ($surface === null && $segment->sacScale !== null && in_array($segment->highway, $trailHighways, true)) {
+            return SurfaceCategory::TrailPath;
+        }
+
+        // Without surface=*, fall back to what kind of way it is. Paved roads
+        // usually carry surface=*, forest tracks and footpaths usually do not;
+        // skipping untagged ways made mountain routes look fully paved.
+        if ($surface === null && $segment->highway === 'track') {
+            return match ($segment->trackType) {
+                'grade1'           => SurfaceCategory::AsphaltPaved,
+                'grade4', 'grade5' => SurfaceCategory::TrailPath,
+                // grade2, grade3, or no tracktype: an unpaved forest/farm road.
+                default            => SurfaceCategory::Gravel,
+            };
+        }
+
+        // footway is left out: in towns it is mostly a paved sidewalk.
+        if ($surface === null && in_array($segment->highway, ['path', 'bridleway'], true)) {
             return SurfaceCategory::TrailPath;
         }
 

@@ -210,4 +210,95 @@ final class SurfaceAnalyzerTest extends TestCase
 
         $this->assertSame('unknown', $analysis->technicality->level->value);
     }
+
+    /**
+     * In OSM a paved road usually carries surface=*, a forest track or a
+     * footpath usually does not. Reading only surface=* made every mountain
+     * route look paved: on a 34 km PSS trekking route the only classified
+     * points were the four on asphalt, reported as "100 % asphalt".
+     *
+     * @return array<string, array{array<string, string>, SurfaceCategory}>
+     */
+    public static function untaggedWays(): array
+    {
+        return [
+            'track without tracktype' => [['highway' => 'track'], SurfaceCategory::Gravel],
+            'track grade1' => [['highway' => 'track', 'tracktype' => 'grade1'], SurfaceCategory::AsphaltPaved],
+            'track grade2' => [['highway' => 'track', 'tracktype' => 'grade2'], SurfaceCategory::Gravel],
+            'track grade3' => [['highway' => 'track', 'tracktype' => 'grade3'], SurfaceCategory::Gravel],
+            'track grade4' => [['highway' => 'track', 'tracktype' => 'grade4'], SurfaceCategory::TrailPath],
+            'track grade5' => [['highway' => 'track', 'tracktype' => 'grade5'], SurfaceCategory::TrailPath],
+            'path' => [['highway' => 'path'], SurfaceCategory::TrailPath],
+            'bridleway' => [['highway' => 'bridleway'], SurfaceCategory::TrailPath],
+        ];
+    }
+
+    /** @param array<string, string> $tags */
+    #[\PHPUnit\Framework\Attributes\DataProvider('untaggedWays')]
+    public function testAWayWithoutASurfaceTagIsClassifiedFromItsKind(array $tags, SurfaceCategory $expected): void
+    {
+        $points = [new TrackPoint(lat: 43.0000, lon: 22.8000)];
+
+        $response = json_encode(['elements' => [[
+            'type' => 'way',
+            'tags' => $tags,
+            'geometry' => [['lat' => 43.0000, 'lon' => 22.8000], ['lat' => 43.0010, 'lon' => 22.8000]],
+        ]]]);
+
+        $analysis = (new SurfaceAnalyzer($this->overpass($response)))->analyze($points);
+
+        $this->assertSame($expected, $analysis->dominantCategory);
+    }
+
+    public function testAnExplicitSurfaceTagStillWinsOverTheKindOfWay(): void
+    {
+        $points = [new TrackPoint(lat: 43.0000, lon: 22.8000)];
+
+        $response = json_encode(['elements' => [[
+            'type' => 'way',
+            'tags' => ['highway' => 'track', 'tracktype' => 'grade5', 'surface' => 'asphalt'],
+            'geometry' => [['lat' => 43.0000, 'lon' => 22.8000], ['lat' => 43.0010, 'lon' => 22.8000]],
+        ]]]);
+
+        $analysis = (new SurfaceAnalyzer($this->overpass($response)))->analyze($points);
+
+        $this->assertSame(SurfaceCategory::AsphaltPaved, $analysis->dominantCategory);
+    }
+
+    public function testAnUntaggedResidentialStreetStaysUnclassified(): void
+    {
+        $points = [new TrackPoint(lat: 43.0000, lon: 22.8000)];
+
+        $response = json_encode(['elements' => [[
+            'type' => 'way',
+            'tags' => ['highway' => 'residential'],
+            'geometry' => [['lat' => 43.0000, 'lon' => 22.8000], ['lat' => 43.0010, 'lon' => 22.8000]],
+        ]]]);
+
+        $analysis = (new SurfaceAnalyzer($this->overpass($response)))->analyze($points);
+
+        $this->assertSame('unavailable', $analysis->status);
+    }
+
+    /**
+     * A straight forest road is often mapped with vertices hundreds of metres
+     * apart. A point on the road between two vertices is on the way, even
+     * though it is far from both vertices.
+     */
+    public function testAPointBetweenTwoDistantVerticesMatchesTheWay(): void
+    {
+        $points = [new TrackPoint(lat: 43.0045, lon: 22.8000)];
+
+        $response = json_encode(['elements' => [[
+            'type' => 'way',
+            'tags' => ['highway' => 'track', 'surface' => 'gravel'],
+            // Vertices 1 km apart; the point sits halfway, on the line.
+            'geometry' => [['lat' => 43.0000, 'lon' => 22.8000], ['lat' => 43.0090, 'lon' => 22.8000]],
+        ]]]);
+
+        $analysis = (new SurfaceAnalyzer($this->overpass($response)))->analyze($points);
+
+        $this->assertSame(100.0, $analysis->coveragePercent);
+        $this->assertSame(SurfaceCategory::Gravel, $analysis->dominantCategory);
+    }
 }

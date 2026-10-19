@@ -201,6 +201,7 @@ class OverpassClient
                 highway: isset($tags['highway']) ? (string) $tags['highway'] : null,
                 sacScale: isset($tags['sac_scale']) ? (string) $tags['sac_scale'] : null,
                 trailVisibility: isset($tags['trail_visibility']) ? (string) $tags['trail_visibility'] : null,
+                trackType: isset($tags['tracktype']) ? (string) $tags['tracktype'] : null,
             );
         }
 
