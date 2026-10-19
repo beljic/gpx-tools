@@ -16,9 +16,11 @@ class GeoTest extends TestCase
 
     public function testKnownDistanceBelgradeParis(): void
     {
-        // Belgrade (44.8167, 20.4667) → Paris (48.8566, 2.3522) ≈ 1737 km
+        // Belgrade (44.8167, 20.4667) → Paris (48.8566, 2.3522): great-circle
+        // distance ≈ 1445 km. The 1737 km this test used to expect is not the
+        // distance between these points; it failed from the first release.
         $km = Geo::haversineKm(44.8167, 20.4667, 48.8566, 2.3522);
-        $this->assertEqualsWithDelta(1737, $km, 5);
+        $this->assertEqualsWithDelta(1445, $km, 5);
     }
 
     public function testApproximately111KmPerDegreeLatitude(): void
