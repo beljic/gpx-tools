@@ -14,6 +14,8 @@ use SimpleXMLElement;
 class GpxParser
 {
     private const NS_GARMIN_TPX = 'http://www.garmin.com/xmlschemas/TrackPointExtension/v1';
+    /** Cluetrust GPXDATA — COROS writes heart rate and cadence here instead of Garmin's extension. */
+    private const NS_GPXDATA = 'http://www.cluetrust.com/XML/GPXDATA/1/0';
 
     public function parseFile(string $path): ParsedGpx
     {
@@ -99,6 +101,10 @@ class GpxParser
                 $cad  = isset($ext->cad)   ? (int) $ext->cad   : null;
                 $temp = isset($ext->atemp) ? (float) $ext->atemp : null;
             }
+
+            $gpxdata = $pt->extensions->children(self::NS_GPXDATA);
+            $hr  ??= isset($gpxdata->hr)      ? (int) $gpxdata->hr      : null;
+            $cad ??= isset($gpxdata->cadence) ? (int) $gpxdata->cadence : null;
         }
 
         return new TrackPoint(

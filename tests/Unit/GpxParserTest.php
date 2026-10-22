@@ -52,6 +52,31 @@ class GpxParserTest extends TestCase
         $this->assertEqualsWithDelta(150.0, $pt->power, 0.1);
     }
 
+    public function testParsesCorosGpxdataExtensions(): void
+    {
+        $gpx = $this->parser->parseString(<<<'GPX'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxdata="http://www.cluetrust.com/XML/GPXDATA/1/0" creator="COROS Wearables" version="1.1">
+             <trk><trkseg>
+              <trkpt lat="44.1849533" lon="19.3289650">
+               <ele>219</ele>
+               <time>2026-08-12T04:03:39Z</time>
+               <extensions>
+                <gpxdata:hr>112</gpxdata:hr>
+                <gpxdata:distance>5.50</gpxdata:distance>
+                <gpxdata:cadence>78</gpxdata:cadence>
+                <gpxdata:speed>2.556</gpxdata:speed>
+               </extensions>
+              </trkpt>
+             </trkseg></trk>
+            </gpx>
+            GPX);
+        $pt = $gpx->track[0];
+
+        $this->assertSame(112, $pt->heartRate);
+        $this->assertSame(78, $pt->cadence);
+    }
+
     public function testParsesTrackMetadata(): void
     {
         $gpx = $this->parser->parseFile($this->fixture('sample.gpx'));
