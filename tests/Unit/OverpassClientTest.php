@@ -422,4 +422,50 @@ final class OverpassClientTest extends TestCase
         $this->assertStringContainsString('around:30,', $query);
         $this->assertStringContainsString('out geom;', $query);
     }
+
+    public function testDrinkingWaterNearTheRouteComesBackWithItsKilometre(): void
+    {
+        // A straight line north, ~100 m between points: about 3 km long.
+        $points = [];
+        for ($i = 0; $i <= 30; $i++) {
+            $points[] = new TrackPoint(lat: 44.0 + $i * 0.0009, lon: 19.3);
+        }
+        $response = json_encode(['elements' => [
+            // Unnamed fountain right on the line, ~2 km in.
+            ['type' => 'node', 'lat' => 44.018, 'lon' => 19.30005, 'tags' => ['amenity' => 'drinking_water']],
+            // Named spring 50 m off the line, ~1 km in.
+            ['type' => 'node', 'lat' => 44.009, 'lon' => 19.3006, 'tags' => ['natural' => 'spring', 'name' => 'Izvor']],
+            // A tap 400 m away: not on the route.
+            ['type' => 'node', 'lat' => 44.018, 'lon' => 19.305, 'tags' => ['man_made' => 'water_tap']],
+        ]]);
+        $http = new class ($response) implements HttpClientInterface
+        {
+            public string $body = '';
+
+            public function __construct(private readonly string $response) {}
+
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            public function post(string $url, string $body): ?string
+            {
+                $this->body = $body;
+
+                return $this->response;
+            }
+        };
+
+        $water = (new OverpassClient($http, rateLimitUs: 0))->fetchNaturalFeatures($points)['water'];
+
+        $this->assertStringContainsString('drinking_water', urldecode($http->body));
+        $this->assertCount(2, $water);
+        $this->assertSame('spring', $water[0]->kind);
+        $this->assertSame('Izvor', $water[0]->name);
+        $this->assertEqualsWithDelta(1.0, $water[0]->routeKm, 0.15);
+        $this->assertSame('drinking_water', $water[1]->kind);
+        $this->assertNull($water[1]->name);
+        $this->assertEqualsWithDelta(2.0, $water[1]->routeKm, 0.15);
+    }
 }

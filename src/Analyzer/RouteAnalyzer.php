@@ -83,6 +83,7 @@ class RouteAnalyzer
                 ? []
                 : $this->overpass->fetchMountainRanges($summit->lat, $summit->lon),
             surface: $surface,
+            waterPoints: $natural['water'] ?? [],
         );
     }
 

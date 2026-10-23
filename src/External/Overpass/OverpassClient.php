@@ -7,6 +7,7 @@ namespace Beljic\GpxTools\External\Overpass;
 use Beljic\GpxTools\Data\HighwaySegment;
 use Beljic\GpxTools\Data\Peak;
 use Beljic\GpxTools\Data\TrackPoint;
+use Beljic\GpxTools\Data\WaterPoint;
 use Beljic\GpxTools\Http\HttpClientInterface;
 use Beljic\GpxTools\Support\Geo;
 
@@ -38,6 +39,9 @@ class OverpassClient
      */
     public const QUERY_TIMEOUT_SECONDS = 60;
 
+    /** A fountain or spring further than this from the route is not "on" it. */
+    public const WATER_POINT_RADIUS_KM = 0.1;
+
     private readonly string $endpoint;
 
     public function __construct(
@@ -58,12 +62,12 @@ class OverpassClient
 
     /**
      * @param TrackPoint[] $trackPoints
-     * @return array{peaks: Peak[], rivers: string[], lakes: string[]}
+     * @return array{peaks: Peak[], rivers: string[], lakes: string[], water: WaterPoint[]}
      */
     public function fetchNaturalFeatures(array $trackPoints, float $peakRadiusM = 200.0): array
     {
         if (empty($trackPoints)) {
-            return ['peaks' => [], 'rivers' => [], 'lakes' => []];
+            return ['peaks' => [], 'rivers' => [], 'lakes' => [], 'water' => []];
         }
 
         $overpassPeakM = max(500, (int) ($peakRadiusM * 2));
@@ -83,13 +87,17 @@ class OverpassClient
             . "way[\"waterway\"=\"stream\"](around:{$waterM},{$polyline});"
             . "way[\"natural\"=\"water\"](around:{$waterM},{$polyline});"
             . "relation[\"natural\"=\"water\"](around:{$waterM},{$polyline});"
+            // Drinking water: same circles, kept only within WATER_POINT_RADIUS_KM below.
+            . "node[\"amenity\"=\"drinking_water\"](around:{$overpassPeakM},{$polyline});"
+            . "node[\"man_made\"=\"water_tap\"](around:{$overpassPeakM},{$polyline});"
+            . "node[\"natural\"=\"spring\"](around:{$overpassPeakM},{$polyline});"
             . ");out;";
 
         $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
         usleep($this->rateLimitUs);
 
         if ($raw === null || !json_validate($raw)) {
-            return ['peaks' => [], 'rivers' => [], 'lakes' => []];
+            return ['peaks' => [], 'rivers' => [], 'lakes' => [], 'water' => []];
         }
 
         return $this->parseResponse((array) json_decode($raw, true), $trackPoints, $peakRadiusM);
@@ -216,11 +224,30 @@ class OverpassClient
         $peaks  = [];
         $rivers = [];
         $lakes  = [];
+        $water  = [];
         $seen   = [];
+        $routeKm = $this->cumulativeKm($checkPoints);
 
         foreach ($data['elements'] ?? [] as $el) {
             $tags = $el['tags'] ?? [];
             $name = $tags['name'] ?? $tags['name:sr'] ?? null;
+
+            // Most fountains and springs have no name, so they are read
+            // before the name check below, which is for peaks and water bodies.
+            $waterKind = $this->waterKind($tags);
+            if ($waterKind !== null && isset($el['lat'], $el['lon'])) {
+                [$distanceKm, $index] = $this->nearestOnTrack((float) $el['lat'], (float) $el['lon'], $checkPoints);
+                if ($distanceKm <= self::WATER_POINT_RADIUS_KM) {
+                    $water[] = new WaterPoint(
+                        kind:    $waterKind,
+                        lat:     (float) $el['lat'],
+                        lon:     (float) $el['lon'],
+                        routeKm: round($routeKm[$index], 1),
+                        name:    $name,
+                    );
+                }
+                continue;
+            }
 
             if (!$name || isset($seen[$name])) {
                 continue;
@@ -255,8 +282,62 @@ class OverpassClient
         usort($peaks, fn(Peak $a, Peak $b) => ($b->elevation ?? 0) <=> ($a->elevation ?? 0));
         sort($rivers);
         sort($lakes);
+        usort($water, fn(WaterPoint $a, WaterPoint $b) => $a->routeKm <=> $b->routeKm);
 
-        return ['peaks' => $peaks, 'rivers' => $rivers, 'lakes' => $lakes];
+        return ['peaks' => $peaks, 'rivers' => $rivers, 'lakes' => $lakes, 'water' => $water];
+    }
+
+    /** @param array<string, string> $tags */
+    private function waterKind(array $tags): ?string
+    {
+        return match (true) {
+            ($tags['amenity'] ?? null) === 'drinking_water',
+            ($tags['man_made'] ?? null) === 'water_tap' => 'drinking_water',
+            ($tags['natural'] ?? null) === 'spring' => 'spring',
+            default => null,
+        };
+    }
+
+    /**
+     * Distance to the nearest of $trackPoints and that point's index.
+     *
+     * @param  TrackPoint[] $trackPoints
+     * @return array{0: float, 1: int}
+     */
+    private function nearestOnTrack(float $lat, float $lon, array $trackPoints): array
+    {
+        $min = PHP_FLOAT_MAX;
+        $index = 0;
+        foreach ($trackPoints as $i => $p) {
+            $d = Geo::haversineKm($lat, $lon, $p->lat, $p->lon);
+            if ($d < $min) {
+                $min = $d;
+                $index = $i;
+            }
+        }
+
+        return [$min, $index];
+    }
+
+    /**
+     * Km from the start at each of $points.
+     *
+     * @param  TrackPoint[] $points
+     * @return list<float>
+     */
+    private function cumulativeKm(array $points): array
+    {
+        $km = [];
+        $total = 0.0;
+        foreach (array_values($points) as $i => $p) {
+            if ($i > 0) {
+                $prev = $points[$i - 1];
+                $total += Geo::haversineKm($prev->lat, $prev->lon, $p->lat, $p->lon);
+            }
+            $km[] = $total;
+        }
+
+        return $km;
     }
 
     /** @param TrackPoint[] $trackPoints */

@@ -13,6 +13,7 @@ readonly class RouteAnalysis
      * @param string[]   $lakes
      * @param Waypoint[] $waypoints
      * @param string[]   $mountainRanges
+     * @param WaterPoint[] $waterPoints
      */
     public function __construct(
         public array $peaks          = [],
@@ -22,5 +23,6 @@ readonly class RouteAnalysis
         public array $waypoints      = [],
         public array $mountainRanges = [],
         public ?SurfaceAnalysis $surface = null,
+        public array $waterPoints = [],
     ) {}
 }
