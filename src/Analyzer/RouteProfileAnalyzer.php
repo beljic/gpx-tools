@@ -101,9 +101,7 @@ class RouteProfileAnalyzer
             samples:                $this->buildSamples($steps),
             distanceKm:             $totalKm,
             flatEquivalentKm:       $flatKm,
-            // The trail rule of thumb: a kilometre of effort per 100 m climbed,
-            // and nothing back for the descent.
-            trailEquivalentKm:      $totalKm + $ascentM / 100.0,
+            trailEquivalentKm:      FinishTimeEstimator::trailEquivalentKm($totalKm, $ascentM),
             totalAscentM:           $ascentM,
             totalDescentM:          $descentM,
             gradeAdjustedFactor:    $totalKm > 0 ? $flatKm / $totalKm : 1.0,

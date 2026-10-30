@@ -36,10 +36,44 @@ class FinishTimeEstimator
 
     public function __construct(private readonly float $exponent = self::DEFAULT_EXPONENT) {}
 
+    /**
+     * The trail rule of thumb: a kilometre of effort per 100 m climbed, and
+     * nothing back for the descent. One place, so the profile's figure and an
+     * estimate from a corrected climb can never use two different rules.
+     */
+    public static function trailEquivalentKm(float $distanceKm, float $ascentM): float
+    {
+        return $distanceKm + max(0.0, $ascentM) / 100.0;
+    }
+
     public function estimate(
         RouteProfile $profile,
         int $referenceSeconds,
         float $referenceDistanceKm = self::HALF_MARATHON_KM,
+    ): FinishTimeEstimate {
+        return $this->estimateForEffort($profile->distanceKm, $profile->trailEquivalentKm, $referenceSeconds, $referenceDistanceKm);
+    }
+
+    /**
+     * The same estimate over a climb the caller knows better than the profile
+     * does. The profile smooths elevation over a few hundred metres, which
+     * flattens short real climbs; a race's published climb, or a corrected
+     * one, is usually the closer figure.
+     */
+    public function estimateForClimb(
+        float $distanceKm,
+        float $ascentM,
+        int $referenceSeconds,
+        float $referenceDistanceKm = self::HALF_MARATHON_KM,
+    ): FinishTimeEstimate {
+        return $this->estimateForEffort($distanceKm, self::trailEquivalentKm($distanceKm, $ascentM), $referenceSeconds, $referenceDistanceKm);
+    }
+
+    private function estimateForEffort(
+        float $routeDistanceKm,
+        float $effortKm,
+        int $referenceSeconds,
+        float $referenceDistanceKm,
     ): FinishTimeEstimate {
         if ($referenceSeconds <= 0) {
             throw new InvalidArgumentException('Reference time must be greater than zero.');
@@ -48,8 +82,6 @@ class FinishTimeEstimator
         if ($referenceDistanceKm <= 0.0) {
             throw new InvalidArgumentException('Reference distance must be greater than zero.');
         }
-
-        $effortKm = $profile->trailEquivalentKm;
 
         if ($effortKm <= 0.0) {
             throw new InvalidArgumentException('Route has no measurable distance to estimate over.');
@@ -60,7 +92,7 @@ class FinishTimeEstimator
         return new FinishTimeEstimate(
             referenceDistanceKm: $referenceDistanceKm,
             referenceSeconds:    $referenceSeconds,
-            routeDistanceKm:     $profile->distanceKm,
+            routeDistanceKm:     $routeDistanceKm,
             effortDistanceKm:    $effortKm,
             estimatedSeconds:    (int) round($seconds),
             riegelExponent:      $this->exponent,

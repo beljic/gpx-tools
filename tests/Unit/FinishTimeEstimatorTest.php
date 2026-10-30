@@ -103,4 +103,21 @@ class FinishTimeEstimatorTest extends TestCase
 
         (new FinishTimeEstimator)->estimate($this->profile(10.0, 11.0, 13.0), 0);
     }
+
+    public function testAKnownClimbReplacesTheProfilesSmoothedOne(): void
+    {
+        // 34 km with 1,700 m published climb: 51 km of effort, not the 48.3 km
+        // a profile smoothed down to 1,428 m would give.
+        $estimate = (new FinishTimeEstimator)->estimateForClimb(34.0, 1700.0, 7200);
+
+        $this->assertEqualsWithDelta(51.0, $estimate->effortDistanceKm, 0.001);
+        $this->assertSame(34.0, $estimate->routeDistanceKm);
+        $this->assertSame((int) round(7200 * (51.0 / FinishTimeEstimator::HALF_MARATHON_KM) ** 1.06), $estimate->estimatedSeconds);
+    }
+
+    public function testTheTrailEquivalentIgnoresANegativeClimb(): void
+    {
+        $this->assertSame(10.0, FinishTimeEstimator::trailEquivalentKm(10.0, -50.0));
+        $this->assertSame(12.5, FinishTimeEstimator::trailEquivalentKm(10.0, 250.0));
+    }
 }
