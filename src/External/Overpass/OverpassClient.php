@@ -39,6 +39,17 @@ class OverpassClient
      */
     public const QUERY_TIMEOUT_SECONDS = 60;
 
+    /**
+     * Length of route the highway query asks about at a time.
+     *
+     * Overpass answers an `around:` search by first taking every way in the
+     * bounding box of the whole polyline, so on a 69-168 km ultra the one
+     * query asked for every road in a region and ran out of time on each of
+     * the three Istria routes (16.11.2026), leaving the surface unavailable.
+     * A stretch this long keeps the box small; a shorter route stays one query.
+     */
+    public const HIGHWAY_CHUNK_KM = 20.0;
+
     /** A fountain or spring further than this from the route is not "on" it. */
     public const WATER_POINT_RADIUS_KM = 0.1;
 
@@ -158,35 +169,85 @@ class OverpassClient
             return [];
         }
 
-        $radiusM     = max(1, (int) $searchRadiusM);
-        $queryPoints = $this->sampleForQuery($trackPoints, $radiusM);
-        $polyline    = implode(',', array_map(
-            fn(TrackPoint $p) => sprintf('%F,%F', $p->lat, $p->lon),
-            $queryPoints
-        ));
+        $radiusM  = max(1, (int) $searchRadiusM);
+        $segments = [];
+        $seenWays = [];
 
-        $query = '[out:json][timeout:' . self::QUERY_TIMEOUT_SECONDS . '];'
-            . "way[\"highway\"](around:{$radiusM},{$polyline});"
-            . 'out geom;';
+        // A stretch that fails is skipped, not the whole route: the caller
+        // sees the failure through its HTTP client, and the coverage figure
+        // computed from these segments shows how much of the route is known.
+        foreach ($this->splitByDistance($trackPoints, self::HIGHWAY_CHUNK_KM) as $stretch) {
+            $queryPoints = $this->sampleForQuery($stretch, $radiusM);
+            $polyline    = implode(',', array_map(
+                fn(TrackPoint $p) => sprintf('%F,%F', $p->lat, $p->lon),
+                $queryPoints
+            ));
 
-        $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
-        usleep($this->rateLimitUs);
+            $query = '[out:json][timeout:' . self::QUERY_TIMEOUT_SECONDS . '];'
+                . "way[\"highway\"](around:{$radiusM},{$polyline});"
+                . 'out geom;';
 
-        if ($raw === null || !json_validate($raw)) {
-            return [];
+            $raw = $this->http->post($this->endpoint, 'data=' . urlencode($query));
+            usleep($this->rateLimitUs);
+
+            if ($raw === null || !json_validate($raw)) {
+                continue;
+            }
+
+            array_push($segments, ...$this->parseHighwayResponse((array) json_decode($raw, true), $seenWays));
         }
 
-        return $this->parseHighwayResponse((array) json_decode($raw, true));
+        return $segments;
     }
 
-    /** @return HighwaySegment[] */
-    private function parseHighwayResponse(array $data): array
+    /**
+     * Consecutive stretches of about $stretchKm each. Neighbours share their
+     * boundary point, so no part of the route falls between two of them.
+     *
+     * @param  TrackPoint[] $points
+     * @return list<TrackPoint[]>
+     */
+    private function splitByDistance(array $points, float $stretchKm): array
+    {
+        $points    = array_values($points);
+        $stretches = [];
+        $current   = [$points[0]];
+        $km        = 0.0;
+
+        for ($i = 1, $n = count($points); $i < $n; $i++) {
+            $km += Geo::haversineKm($points[$i - 1]->lat, $points[$i - 1]->lon, $points[$i]->lat, $points[$i]->lon);
+            $current[] = $points[$i];
+
+            if ($km >= $stretchKm && $i < $n - 1) {
+                $stretches[] = $current;
+                $current     = [$points[$i]];
+                $km          = 0.0;
+            }
+        }
+
+        $stretches[] = $current;
+
+        return $stretches;
+    }
+
+    /**
+     * @param  array<int|string, true> $seenWays way ids already taken from an earlier stretch
+     * @return HighwaySegment[]
+     */
+    private function parseHighwayResponse(array $data, array &$seenWays): array
     {
         $segments = [];
 
         foreach ($data['elements'] ?? [] as $el) {
             if (($el['type'] ?? null) !== 'way' || empty($el['geometry'])) {
                 continue;
+            }
+
+            if (isset($el['id'])) {
+                if (isset($seenWays[$el['id']])) {
+                    continue;
+                }
+                $seenWays[$el['id']] = true;
             }
 
             $points = [];

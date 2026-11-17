@@ -423,6 +423,167 @@ final class OverpassClientTest extends TestCase
         $this->assertStringContainsString('out geom;', $query);
     }
 
+    /**
+     * A straight line north, ~100 m between points.
+     *
+     * @return TrackPoint[]
+     */
+    private function lineNorth(float $km): array
+    {
+        $points = [];
+        for ($i = 0, $n = (int) round($km * 10); $i <= $n; $i++) {
+            $points[] = new TrackPoint(lat: 45.0 + $i * 0.0009, lon: 13.8);
+        }
+
+        return $points;
+    }
+
+    /** @return list<array{0: float, 1: float}> lat/lon pairs of the query polyline */
+    private static function polylineOf(string $body): array
+    {
+        preg_match('/around:\d+,([^)]*)\)/', urldecode($body), $m);
+        $numbers = array_map('floatval', explode(',', $m[1]));
+
+        return array_chunk($numbers, 2);
+    }
+
+    public function testHighwaysOfALongRouteAreAskedForStretchByStretch(): void
+    {
+        // One query for a whole ultra asks the server for every road in the
+        // bounding box of the route, and on 69-168 km routes in Istria it ran
+        // out of time every time, leaving the surface "unavailable".
+        $http = new class implements HttpClientInterface
+        {
+            /** @var string[] */
+            public array $bodies = [];
+
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                $this->bodies[] = $body;
+
+                return '{"elements":[]}';
+            }
+        };
+
+        $points = $this->lineNorth(50.0);
+        (new OverpassClient($http, rateLimitUs: 0))->fetchHighwaySegments($points);
+
+        $this->assertCount(3, $http->bodies, '50 km in stretches of ' . OverpassClient::HIGHWAY_CHUNK_KM . ' km');
+
+        $previousEnd = null;
+        foreach ($http->bodies as $body) {
+            $polyline = self::polylineOf($body);
+            $first = $polyline[0];
+            $last = $polyline[count($polyline) - 1];
+            $spanKm = Geo::haversineKm($first[0], $first[1], $last[0], $last[1]);
+
+            $this->assertLessThanOrEqual(OverpassClient::HIGHWAY_CHUNK_KM + 0.2, $spanKm);
+            if ($previousEnd !== null) {
+                // Stretches meet at a shared point, so no part of the route is skipped.
+                $this->assertEqualsWithDelta($previousEnd[0], $first[0], 1e-6);
+            }
+            $previousEnd = $last;
+        }
+
+        $this->assertEqualsWithDelta($points[0]->lat, self::polylineOf($http->bodies[0])[0][0], 1e-6);
+        $this->assertEqualsWithDelta(end($points)->lat, $previousEnd[0], 1e-6);
+    }
+
+    public function testAShortRouteIsStillOneHighwayQuery(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public int $calls = 0;
+
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                $this->calls++;
+
+                return '{"elements":[]}';
+            }
+        };
+
+        (new OverpassClient($http, rateLimitUs: 0))->fetchHighwaySegments($this->lineNorth(15.0));
+
+        $this->assertSame(1, $http->calls);
+    }
+
+    public function testAWayReturnedForTwoStretchesIsCountedOnce(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                return json_encode(['elements' => [[
+                    'type' => 'way',
+                    'id' => 77,
+                    'tags' => ['highway' => 'track', 'surface' => 'gravel'],
+                    'geometry' => [['lat' => 45.0, 'lon' => 13.8], ['lat' => 45.4, 'lon' => 13.8]],
+                ]]]);
+            }
+        };
+
+        $segments = (new OverpassClient($http, rateLimitUs: 0))->fetchHighwaySegments($this->lineNorth(50.0));
+
+        $this->assertCount(1, $segments);
+    }
+
+    public function testStretchesThatAnsweredAreKeptWhenOneFails(): void
+    {
+        $http = new class implements HttpClientInterface
+        {
+            public int $calls = 0;
+
+            #[\Override]
+            public function get(string $url): ?string
+            {
+                return null;
+            }
+
+            #[\Override]
+            public function post(string $url, string $body): ?string
+            {
+                $this->calls++;
+                if ($this->calls === 2) {
+                    return null;
+                }
+
+                return json_encode(['elements' => [[
+                    'type' => 'way',
+                    'id' => $this->calls,
+                    'tags' => ['highway' => 'path'],
+                    'geometry' => [['lat' => 45.0, 'lon' => 13.8], ['lat' => 45.001, 'lon' => 13.8]],
+                ]]]);
+            }
+        };
+
+        $segments = (new OverpassClient($http, rateLimitUs: 0))->fetchHighwaySegments($this->lineNorth(50.0));
+
+        $this->assertSame(3, $http->calls, 'a failed stretch does not stop the rest');
+        $this->assertCount(2, $segments);
+    }
+
     public function testDrinkingWaterNearTheRouteComesBackWithItsKilometre(): void
     {
         // A straight line north, ~100 m between points: about 3 km long.
